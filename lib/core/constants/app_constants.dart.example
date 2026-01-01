@@ -1,0 +1,31 @@
+// IMPORTANT: Never commit actual credentials to GitHub!
+// Copy this file to app_constants.dart and fill in your actual values from:
+// - Supabase: https://supabase.com/dashboard
+// - Google Cloud Console: https://console.cloud.google.com/
+
+class AppConstants {
+  static const String appName = 'HLedger';
+  static const String tagline =
+      'Your Chat. Your Tasks. Your Transactions. Sorted.';
+  static const String splashSubtext = 'Smart Ledger for Smarter You';
+
+  // Supabase Configuration
+  // Get these from your Supabase project settings
+  static const String supabaseUrl = 'YOUR_SUPABASE_URL_HERE';
+  static const String supabaseAnonKey = 'YOUR_SUPABASE_ANON_KEY_HERE';
+
+  // Gemini API Configuration
+  // Get this from Google Cloud Console
+  static const String geminiApiKey = 'YOUR_GEMINI_API_KEY_HERE';
+  static const String geminiEndpoint =
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent';
+
+  // Database Tables
+  static const String usersTable = 'users';
+  static const String transactionsTable = 'transactions';
+  static const String tasksTable = 'tasks';
+
+  // Notification Channel
+  static const String notificationChannelId = 'hledger_reminders';
+  static const String notificationChannelName = 'Task Reminders';
+}

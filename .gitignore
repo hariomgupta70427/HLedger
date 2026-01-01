@@ -1,0 +1,131 @@
+# Flutter and Dart
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+pubspec.lock
+build/
+coverage/
+*.app
+*.apk
+*.jks
+*.keystore
+*.p12
+*.ipa
+*.dSYM.zip
+
+# IDE and Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+*.iml
+.project
+.classpath
+.c9/
+*.launch
+.settings/
+*.sublime-workspace
+*.sublime-project
+
+# Android
+android/.gradle/
+android/.gradle
+android/local.properties
+android/build/
+android/app/debug/
+android/app/release/
+android/gradle/wrapper/gradle-wrapper.properties
+android/.android
+
+# iOS
+ios/.symlinks/
+ios/.generated/
+ios/Flutter/Flutter.framework
+ios/Flutter/Flutter.podspec
+ios/Flutter/Generated.xcconfig
+ios/Flutter/ephemeral/
+ios/Pods/
+ios/Runner.xcworkspace/xcshareddata/xcschemes/Runner.xcscheme
+Podfile.lock
+
+# macOS
+macos/Flutter/Flutter-Debug.xcconfig
+macos/Flutter/Flutter-Release.xcconfig
+macos/Flutter/GeneratedPluginRegistrant.swift
+macos/Pods/
+macos/Podfile.lock
+
+# Web
+web/flutter_service_worker.js
+
+# Credentials and Environment Variables
+.env
+.env.local
+.env.*.local
+.env*.example
+lib/core/constants/app_constants.dart
+!lib/core/constants/app_constants.dart.example
+
+# Sensitive Files
+*.pem
+*.key
+*.p8
+*.p12
+*.keystore
+*.jks
+*.mobileprovision
+*.cer
+*.csr
+google-services.json
+GoogleService-Info.plist
+
+# Node and npm
+node_modules/
+package-lock.json
+npm-debug.log
+yarn-error.log
+
+# Amazon Q and Development Tools
+.amazonq/
+
+# Git
+.git/
+
+# Local environment
+.history/
+.vscode-server/
+
+# Build and Cache
+*.class
+*.o
+*.so
+*.dylib
+*.dll
+*.exe
+*.out
+dist/
+bin/
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Temporary Files
+tmp/
+temp/
+*.tmp
+*.bak
+
+# Generated Documentation
+doc/api/
