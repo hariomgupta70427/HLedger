@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'services/supabase_service.dart';
 import 'services/gemini_service.dart';
 import 'services/notification_service.dart';
+import 'services/chat_history_service.dart';
 import 'providers/app_provider.dart';
 import 'models/transaction.dart';
 import 'models/task.dart';
@@ -388,17 +389,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 }
 
-class ChatMessage {
-  final String text;
-  final bool isUser;
-  final DateTime timestamp;
 
-  ChatMessage({
-    required this.text,
-    required this.isUser,
-    required this.timestamp,
-  });
-}
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key});
@@ -412,6 +403,26 @@ class _ChatScreenState extends State<ChatScreen> {
   final List<ChatMessage> _messages = [];
   final ScrollController _scrollController = ScrollController();
   bool _isLoading = false;
+  bool _isLoadingHistory = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadChatHistory();
+  }
+
+  Future<void> _loadChatHistory() async {
+    final history = await ChatHistoryService.loadChatHistory();
+    setState(() {
+      _messages.addAll(history);
+      _isLoadingHistory = false;
+    });
+    _scrollToBottom();
+  }
+
+  Future<void> _saveChatHistory() async {
+    await ChatHistoryService.saveChatHistory(_messages);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -425,15 +436,38 @@ class _ChatScreenState extends State<ChatScreen> {
         child: Column(
           children: [
             Expanded(
-              child: ListView.builder(
-                controller: _scrollController,
-                padding: const EdgeInsets.all(16),
-                itemCount: _messages.length,
-                itemBuilder: (context, index) {
-                  final message = _messages[index];
-                  return _buildMessageBubble(message);
-                },
-              ),
+              child: _isLoadingHistory
+                  ? const Center(
+                      child: CircularProgressIndicator(color: Color(0xFF00BFA6)),
+                    )
+                  : _messages.isEmpty
+                      ? Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.chat_bubble_outline, size: 64, color: Colors.grey[400]),
+                              const SizedBox(height: 16),
+                              Text(
+                                'Start a conversation!',
+                                style: TextStyle(fontSize: 18, color: Colors.grey[600]),
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                'Tell me about transactions or tasks',
+                                style: TextStyle(color: Colors.grey[500]),
+                              ),
+                            ],
+                          ),
+                        )
+                      : ListView.builder(
+                          controller: _scrollController,
+                          padding: const EdgeInsets.all(16),
+                          itemCount: _messages.length,
+                          itemBuilder: (context, index) {
+                            final message = _messages[index];
+                            return _buildMessageBubble(message);
+                          },
+                        ),
             ),
             if (_isLoading)
               const Padding(
@@ -516,7 +550,10 @@ class _ChatScreenState extends State<ChatScreen> {
     _scrollToBottom();
 
     try {
+      print('📤 Sending message to Gemini: "$text"');
       final response = await GeminiService.categorizeMessage(text);
+      print('📥 Received response type: ${response.type}');
+      
       final provider = Provider.of<AppProvider>(context, listen: false);
       
       String aiReply;
@@ -531,8 +568,14 @@ class _ChatScreenState extends State<ChatScreen> {
           timestamp: DateTime.now(),
         );
         
-        await provider.addTransaction(transaction);
-        aiReply = '💰 ₹${response.amount} ${response.category} added for ${response.person}';
+        try {
+          await provider.addTransaction(transaction);
+          aiReply = '💰 ₹${response.amount} ${response.category} added for ${response.person}';
+          print('✅ Transaction saved successfully');
+        } catch (e) {
+          print('❌ Failed to save transaction: $e');
+          aiReply = '💰 Got it! ₹${response.amount} ${response.category} for ${response.person}\n\n⚠️ Note: Couldn\'t save to database (connection issue). Transaction recorded in chat only.';
+        }
       } else if (response.type == 'task') {
         final task = Task(
           id: '',
@@ -544,14 +587,25 @@ class _ChatScreenState extends State<ChatScreen> {
           createdAt: DateTime.now(),
         );
         
-        await provider.addTask(task);
-        aiReply = '✅ Task "${response.task}" added';
-        if (response.dueDate != null) {
-          aiReply += ' for ${_formatDate(response.dueDate!)}';
+        try {
+          await provider.addTask(task);
+          aiReply = '✅ Task "${response.task}" added';
+          if (response.dueDate != null) {
+            aiReply += ' for ${_formatDate(response.dueDate!)}';
+          }
+          print('✅ Task saved successfully');
+        } catch (e) {
+          print('❌ Failed to save task: $e');
+          aiReply = '✅ Got it! Task "${response.task}"';
+          if (response.dueDate != null) {
+            aiReply += ' for ${_formatDate(response.dueDate!)}';
+          }
+          aiReply += '\n\n⚠️ Note: Couldn\'t save to database (connection issue). Task recorded in chat only.';
         }
       } else {
         // Conversation type - just show AI reply, don't save
         aiReply = response.reply ?? 'I\'m here to help! You can tell me about transactions or tasks.';
+        print('💬 Conversation response: $aiReply');
       }
 
       setState(() {
@@ -561,18 +615,33 @@ class _ChatScreenState extends State<ChatScreen> {
           timestamp: DateTime.now(),
         ));
       });
-    } catch (e) {
-      print('Error in _sendMessage: $e');
+      _saveChatHistory(); // Save after adding AI response
+    } catch (e, stackTrace) {
+      print('❌ Error in _sendMessage: $e');
+      print('❌ Stack trace: $stackTrace');
+      
+      // Provide user-friendly error message
+      String errorMessage;
+      if (e.toString().contains('521') || e.toString().contains('AuthRetryableFetchException')) {
+        errorMessage = '⚠️ Database connection issue. The chatbot is working, but I can\'t save data right now.\n\nYou can still chat with me! Try:\n• "Hello" for conversation\n• "500 Kaif ko diye" to test transaction detection\n• "Assignment kal karna hai" to test task detection';
+      } else if (e.toString().contains('API key') || e.toString().contains('403')) {
+        errorMessage = '❌ API configuration error. Please check your Gemini API key in settings.';
+      } else {
+        errorMessage = '❌ Something went wrong. Please try again.\n\nError: ${e.toString().split('\n').first}';
+      }
+      
       setState(() {
         _messages.add(ChatMessage(
-          text: 'Error: ${e.toString()}\nPlease try again or check your connection.',
+          text: errorMessage,
           isUser: false,
           timestamp: DateTime.now(),
         ));
       });
+      _saveChatHistory(); // Save even on error
     } finally {
       setState(() => _isLoading = false);
       _scrollToBottom();
+      _saveChatHistory(); // Save after user message
     }
   }
 
@@ -641,7 +710,7 @@ class _KhaataScreenState extends State<KhaataScreen> {
           }
 
           return RefreshIndicator(
-            onRefresh: provider.loadData,
+            onRefresh: provider.refresh,
             child: Column(
               children: [
                 _buildBalanceCard(provider),
@@ -904,7 +973,7 @@ class _TodoScreenState extends State<TodoScreen> with SingleTickerProviderStateM
     }
 
     return RefreshIndicator(
-      onRefresh: provider.loadData,
+      onRefresh: provider.refresh,
       child: ListView.builder(
         padding: const EdgeInsets.all(16),
         itemCount: tasks.length,
