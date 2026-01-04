@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:google_fonts/google_fonts.dart';
 import '../../core/theme/app_theme.dart';
 import '../../data/services/gemini/gemini_service.dart';
 import '../../providers/app_provider.dart';
@@ -40,69 +41,139 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('HLedger Chat'),
-        backgroundColor: AppTheme.background,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.delete_outline),
-            onPressed: _clearHistory,
-            tooltip: 'Clear chat history',
+      body: Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: isDark 
+                ? [const Color(0xFF0F172A), const Color(0xFF1E293B)]
+                : [const Color(0xFFF8FAFC), const Color(0xFFE2E8F0)],
           ),
-        ],
-      ),
-      body: Column(
-        children: [
-          Expanded(
-            child: _messages.isEmpty
-                ? _buildEmptyState()
-                : ListView.builder(
-                    controller: _scrollController,
-                    padding: const EdgeInsets.all(16),
-                    itemCount: _messages.length,
-                    itemBuilder: (context, index) {
-                      final message = _messages[index];
-                      return _buildMessageBubble(message);
-                    },
-                  ),
-          ),
-          if (_isLoading)
-            Padding(
-              padding: const EdgeInsets.all(8.0),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const CircularProgressIndicator(color: AppTheme.accent),
-                  const SizedBox(width: 12),
-                  Text('AI is thinking...', style: TextStyle(color: Colors.grey[600])),
-                ],
+        ),
+        child: SafeArea(
+          child: Column(
+            children: [
+              // Custom App Bar
+              _buildAppBar(isDark),
+              // Messages Area
+              Expanded(
+                child: _messages.isEmpty
+                    ? _buildEmptyState(isDark)
+                    : ListView.builder(
+                        controller: _scrollController,
+                        padding: const EdgeInsets.all(16),
+                        itemCount: _messages.length,
+                        itemBuilder: (context, index) {
+                          final message = _messages[index];
+                          return _buildMessageBubble(message, isDark);
+                        },
+                      ),
               ),
+              if (_isLoading) _buildLoadingIndicator(isDark),
+              _buildMessageInput(isDark),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAppBar(bool isDark) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                colors: [Color(0xFF00BFA6), Color(0xFF00E5CC)],
+              ),
+              borderRadius: BorderRadius.circular(14),
             ),
-          _buildMessageInput(),
+            child: const Icon(Icons.chat_rounded, color: Colors.white, size: 22),
+          ),
+          const SizedBox(width: 12),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'HLedger Chat',
+                style: GoogleFonts.inter(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: isDark ? Colors.white : const Color(0xFF1A1D29),
+                ),
+              ),
+              Text(
+                'AI-powered assistant',
+                style: GoogleFonts.inter(
+                  fontSize: 12,
+                  color: isDark ? Colors.white60 : const Color(0xFF6B7280),
+                ),
+              ),
+            ],
+          ),
+          const Spacer(),
+          Container(
+            decoration: BoxDecoration(
+              color: isDark ? const Color(0xFF1E293B) : Colors.white,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: IconButton(
+              icon: Icon(
+                Icons.delete_outline_rounded,
+                color: isDark ? Colors.white60 : const Color(0xFF6B7280),
+              ),
+              onPressed: _clearHistory,
+              tooltip: 'Clear chat history',
+            ),
+          ),
         ],
       ),
     );
   }
 
-  Widget _buildEmptyState() {
+  Widget _buildEmptyState(bool isDark) {
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.chat_bubble_outline, size: 80, color: Colors.grey[400]),
-          const SizedBox(height: 16),
-          const Text(
-            'Start a conversation!',
-            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+          Container(
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              color: (isDark ? Colors.white : const Color(0xFF00BFA6)).withAlpha(25),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(
+              Icons.chat_bubble_outline_rounded,
+              size: 64,
+              color: isDark ? Colors.white38 : const Color(0xFF00BFA6),
+            ),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 24),
+          Text(
+            'Start a conversation!',
+            style: GoogleFonts.inter(
+              fontSize: 22,
+              fontWeight: FontWeight.bold,
+              color: isDark ? Colors.white : const Color(0xFF1A1D29),
+            ),
+          ),
+          const SizedBox(height: 12),
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 32),
+            padding: const EdgeInsets.symmetric(horizontal: 40),
             child: Text(
               'I can help you track transactions and manage tasks. Just chat with me naturally!',
               textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.grey[600]),
+              style: GoogleFonts.inter(
+                fontSize: 14,
+                color: isDark ? Colors.white60 : const Color(0xFF6B7280),
+              ),
             ),
           ),
         ],
@@ -110,53 +181,143 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  Widget _buildMessageBubble(ChatMessage message) {
+  Widget _buildMessageBubble(ChatMessage message, bool isDark) {
+    final isUser = message.isUser;
+    
     return Align(
-      alignment: message.isUser ? Alignment.centerRight : Alignment.centerLeft,
+      alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
-        margin: const EdgeInsets.symmetric(vertical: 4),
+        margin: const EdgeInsets.symmetric(vertical: 6),
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         decoration: BoxDecoration(
-          color: message.isUser ? AppTheme.userChatBubble : AppTheme.aiChatBubble,
-          borderRadius: BorderRadius.circular(20),
+          gradient: isUser 
+              ? const LinearGradient(colors: [Color(0xFF00BFA6), Color(0xFF00E5CC)])
+              : null,
+          color: isUser 
+              ? null 
+              : (isDark ? const Color(0xFF1E293B) : Colors.white),
+          borderRadius: BorderRadius.circular(20).copyWith(
+            bottomRight: isUser ? const Radius.circular(4) : null,
+            bottomLeft: !isUser ? const Radius.circular(4) : null,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withAlpha(10),
+              blurRadius: 10,
+              offset: const Offset(0, 4),
+            ),
+          ],
         ),
         constraints: BoxConstraints(
           maxWidth: MediaQuery.of(context).size.width * 0.75,
         ),
         child: Text(
           message.text,
-          style: const TextStyle(fontSize: 15),
+          style: GoogleFonts.inter(
+            fontSize: 15,
+            color: isUser 
+                ? Colors.white 
+                : (isDark ? Colors.white : const Color(0xFF1A1D29)),
+          ),
         ),
       ),
     );
   }
 
-  Widget _buildMessageInput() {
+  Widget _buildLoadingIndicator(bool isDark) {
+    return Padding(
+      padding: const EdgeInsets.all(12),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const SizedBox(
+            width: 20,
+            height: 20,
+            child: CircularProgressIndicator(
+              color: Color(0xFF00BFA6),
+              strokeWidth: 2,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Text(
+            'AI is thinking...',
+            style: GoogleFonts.inter(
+              color: isDark ? Colors.white60 : const Color(0xFF6B7280),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMessageInput(bool isDark) {
     return Container(
       padding: const EdgeInsets.all(16),
-      decoration: const BoxDecoration(
-        color: AppTheme.cardBackground,
-        border: Border(top: BorderSide(color: AppTheme.divider)),
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF1E293B) : Colors.white,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withAlpha(10),
+            blurRadius: 20,
+            offset: const Offset(0, -4),
+          ),
+        ],
       ),
       child: Row(
         children: [
           Expanded(
             child: TextField(
               controller: _messageController,
-              decoration: const InputDecoration(
+              style: GoogleFonts.inter(
+                color: isDark ? Colors.white : const Color(0xFF1A1D29),
+              ),
+              decoration: InputDecoration(
                 hintText: 'Type your message...',
-                border: OutlineInputBorder(),
-                contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                hintStyle: GoogleFonts.inter(
+                  color: isDark ? Colors.white38 : const Color(0xFF9CA3AF),
+                ),
+                filled: true,
+                fillColor: isDark ? const Color(0xFF0F172A) : const Color(0xFFF1F5F9),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(16),
+                  borderSide: BorderSide.none,
+                ),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
               ),
               onSubmitted: (_) => _sendMessage(),
               maxLines: null,
             ),
           ),
-          const SizedBox(width: 8),
-          FloatingActionButton.small(
-            onPressed: _isLoading ? null : _sendMessage,
-            backgroundColor: _isLoading ? Colors.grey : AppTheme.accent,
-            child: const Icon(Icons.send, color: Colors.white),
+          const SizedBox(width: 12),
+          Container(
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                colors: [Color(0xFF00BFA6), Color(0xFF00E5CC)],
+              ),
+              borderRadius: BorderRadius.circular(16),
+              boxShadow: [
+                BoxShadow(
+                  color: const Color(0xFF00BFA6).withAlpha(100),
+                  blurRadius: 12,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                onTap: _isLoading ? null : _sendMessage,
+                borderRadius: BorderRadius.circular(16),
+                child: Container(
+                  padding: const EdgeInsets.all(14),
+                  child: Icon(
+                    Icons.send_rounded,
+                    color: _isLoading ? Colors.white60 : Colors.white,
+                  ),
+                ),
+              ),
+            ),
           ),
         ],
       ),
@@ -209,7 +370,7 @@ class _ChatScreenState extends State<ChatScreen> {
       
       // Add error message with details
       final errorMessage = ChatMessage(
-        text: 'Error: ${e.toString()}\n\nPlease check:\n• Internet connection\n• Gemini API key is set in app_constants.dart\n• API key is valid',
+        text: 'Error: ${e.toString()}\n\nPlease check:\n• Internet connection\n• API key is valid',
         isUser: false,
         timestamp: DateTime.now(),
       );
@@ -278,19 +439,48 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _clearHistory() async {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Clear Chat History'),
-        content: const Text('Are you sure you want to clear all chat history?'),
+        backgroundColor: isDark ? const Color(0xFF1E293B) : Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        title: Text(
+          'Clear Chat History',
+          style: GoogleFonts.inter(
+            fontWeight: FontWeight.bold,
+            color: isDark ? Colors.white : const Color(0xFF1A1D29),
+          ),
+        ),
+        content: Text(
+          'Are you sure you want to clear all chat history?',
+          style: GoogleFonts.inter(
+            color: isDark ? Colors.white70 : const Color(0xFF6B7280),
+          ),
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
+            child: Text(
+              'Cancel',
+              style: GoogleFonts.inter(color: isDark ? Colors.white60 : const Color(0xFF6B7280)),
+            ),
           ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Clear', style: TextStyle(color: Colors.red)),
+          Container(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(12),
+              gradient: const LinearGradient(
+                colors: [Color(0xFFEF4444), Color(0xFFF87171)],
+              ),
+            ),
+            child: TextButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: Text(
+                'Clear',
+                style: GoogleFonts.inter(color: Colors.white, fontWeight: FontWeight.w600),
+              ),
+            ),
           ),
         ],
       ),
