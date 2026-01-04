@@ -38,6 +38,13 @@ class GeminiChatResponse {
 }
 
 class GeminiService {
+  // List of free models to try in order of preference
+  static const List<String> _freeModels = [
+    'google/gemma-2-9b-it:free',
+    'meta-llama/llama-3.2-3b-instruct:free', 
+    'mistralai/mistral-7b-instruct:free',
+  ];
+
   /// Main method for chat - returns conversational AI response with categorization
   Future<GeminiChatResponse> chatWithAI(String message) async {
     final prompt = '''
@@ -76,68 +83,81 @@ User: "Hello!"
 Response: {"ai_message": "Hello! How can I help you today? I can help you track transactions and manage tasks.", "type": "normal", "reminder_needed": false}
 ''';
 
-    try {
-      print('🚀 Sending message to OpenRouter API: "$message"');
-      
-      final response = await http.post(
-        Uri.parse(AppConstants.openRouterApiUrl),
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer ${AppConstants.openRouterApiKey}',
-          'HTTP-Referer': 'https://hledger.app',
-          'X-Title': 'HLedger',
-        },
-        body: jsonEncode({
-          'model': AppConstants.openRouterModel,
-          'messages': [
-            {
-              'role': 'user',
-              'content': prompt,
-            }
-          ],
-        }),
-      );
+    // Try primary model from constants first, then fallback models
+    final modelsToTry = [AppConstants.openRouterModel, ..._freeModels];
+    
+    for (final model in modelsToTry) {
+      try {
+        print('🚀 Trying model: $model for message: "$message"');
+        
+        final response = await http.post(
+          Uri.parse(AppConstants.openRouterApiUrl),
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ${AppConstants.openRouterApiKey}',
+            'HTTP-Referer': 'https://hledger.app',
+            'X-Title': 'HLedger',
+          },
+          body: jsonEncode({
+            'model': model,
+            'messages': [
+              {
+                'role': 'user',
+                'content': prompt,
+              }
+            ],
+          }),
+        );
 
-      print('📥 Received response from OpenRouter (status: ${response.statusCode})');
-      
-      if (response.statusCode != 200) {
-        print('❌ API Error: ${response.body}');
-        throw Exception('API returned ${response.statusCode}: ${response.body}');
-      }
+        print('📥 Response from $model (status: ${response.statusCode})');
+        
+        if (response.statusCode == 429) {
+          print('⚠️ Model $model is rate-limited, trying next...');
+          continue; // Try next model
+        }
+        
+        if (response.statusCode != 200) {
+          print('❌ API Error: ${response.body}');
+          continue; // Try next model
+        }
 
-      final responseData = jsonDecode(response.body);
-      print('📄 Raw API response: $responseData');
-      
-      final aiText = responseData['choices'][0]['message']['content'] as String;
-      print('📝 AI response text: $aiText');
+        final responseData = jsonDecode(response.body);
+        print('📄 Raw API response: $responseData');
+        
+        final aiText = responseData['choices'][0]['message']['content'] as String;
+        print('📝 AI response text: $aiText');
 
-      // Extract JSON from response
-      String jsonText = aiText.trim();
-      
-      // Remove markdown code blocks if present
-      if (jsonText.startsWith('```json')) {
-        jsonText = jsonText.substring(7);
+        // Extract JSON from response
+        String jsonText = aiText.trim();
+        
+        // Remove markdown code blocks if present
+        if (jsonText.startsWith('```json')) {
+          jsonText = jsonText.substring(7);
+        }
+        if (jsonText.startsWith('```')) {
+          jsonText = jsonText.substring(3);
+        }
+        if (jsonText.endsWith('```')) {
+          jsonText = jsonText.substring(0, jsonText.length - 3);
+        }
+        
+        jsonText = jsonText.trim();
+        
+        print('📋 Cleaned JSON: $jsonText');
+        
+        final jsonData = json.decode(jsonText);
+        final result = GeminiChatResponse.fromJson(jsonData);
+        print('✅ Successfully parsed response: type=${result.type}, message=${result.aiMessage}');
+        return result;
+      } catch (e) {
+        print('❌ Error with model $model: $e');
+        continue; // Try next model
       }
-      if (jsonText.startsWith('```')) {
-        jsonText = jsonText.substring(3);
-      }
-      if (jsonText.endsWith('```')) {
-        jsonText = jsonText.substring(0, jsonText.length - 3);
-      }
-      
-      jsonText = jsonText.trim();
-      
-      print('📋 Cleaned JSON: $jsonText');
-      
-      final jsonData = json.decode(jsonText);
-      final result = GeminiChatResponse.fromJson(jsonData);
-      print('✅ Successfully parsed response: type=${result.type}, message=${result.aiMessage}');
-      return result;
-    } catch (e) {
-      print('❌ Error in chatWithAI: $e');
-      // Fallback: return a default response
-      return _fallbackChat(message);
     }
+    
+    // All models failed, use fallback
+    print('❌ All models failed, using fallback categorization');
+    return _fallbackChat(message);
   }
 
   GeminiChatResponse _fallbackChat(String message) {

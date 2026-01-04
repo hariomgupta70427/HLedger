@@ -144,4 +144,34 @@ class SupabaseService {
 
     return Task.fromJson(response);
   }
+
+  static Future<Transaction> updateTransaction(Transaction transaction) async {
+    final response = await _client
+        .from(AppConstants.transactionsTable)
+        .update({
+          'person': transaction.person,
+          'amount': transaction.amount,
+          'category': transaction.category,
+          'description': transaction.description,
+        })
+        .eq('id', transaction.id)
+        .select()
+        .single();
+
+    return Transaction.fromJson(response);
+  }
+
+  static Future<void> deleteTransaction(String id) async {
+    await _client
+        .from(AppConstants.transactionsTable)
+        .delete()
+        .eq('id', id);
+  }
+
+  static Future<void> deleteTask(String id) async {
+    await _client
+        .from(AppConstants.tasksTable)
+        .delete()
+        .eq('id', id);
+  }
 }

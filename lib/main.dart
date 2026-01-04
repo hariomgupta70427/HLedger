@@ -414,6 +414,11 @@ class _KhaataScreenState extends State<KhaataScreen> {
         title: const Text('Khaata Book'),
         backgroundColor: const Color(0xFFF8F9FA),
       ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: () => _showAddTransactionDialog(context),
+        backgroundColor: const Color(0xFF00BFA6),
+        child: const Icon(Icons.add, color: Colors.white),
+      ),
       body: Consumer<AppProvider>(
         builder: (context, provider, child) {
           if (provider.isLoading) {
@@ -434,6 +439,231 @@ class _KhaataScreenState extends State<KhaataScreen> {
         },
       ),
     );
+  }
+
+  void _showAddTransactionDialog(BuildContext context, {Transaction? existing}) {
+    final personController = TextEditingController(text: existing?.person ?? '');
+    final amountController = TextEditingController(text: existing?.amount.toString() ?? '');
+    final descController = TextEditingController(text: existing?.description ?? '');
+    String category = existing?.category ?? 'debit';
+    final isEditing = existing != null;
+
+    showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text(isEditing ? 'Edit Transaction' : 'Add Transaction'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: personController,
+                  decoration: const InputDecoration(
+                    labelText: 'Person Name',
+                    prefixIcon: Icon(Icons.person),
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: amountController,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: 'Amount (₹)',
+                    prefixIcon: Icon(Icons.currency_rupee),
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: descController,
+                  decoration: const InputDecoration(
+                    labelText: 'Description (optional)',
+                    prefixIcon: Icon(Icons.note),
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Expanded(
+                      child: GestureDetector(
+                        onTap: () => setDialogState(() => category = 'debit'),
+                        child: Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: category == 'debit' ? Colors.red[100] : Colors.grey[100],
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(
+                              color: category == 'debit' ? Colors.red : Colors.grey,
+                              width: 2,
+                            ),
+                          ),
+                          child: Column(
+                            children: [
+                              Icon(Icons.arrow_upward, color: category == 'debit' ? Colors.red : Colors.grey),
+                              const SizedBox(height: 4),
+                              Text('Gave (Debit)', style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                color: category == 'debit' ? Colors.red : Colors.grey,
+                              )),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: GestureDetector(
+                        onTap: () => setDialogState(() => category = 'credit'),
+                        child: Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: category == 'credit' ? Colors.green[100] : Colors.grey[100],
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(
+                              color: category == 'credit' ? Colors.green : Colors.grey,
+                              width: 2,
+                            ),
+                          ),
+                          child: Column(
+                            children: [
+                              Icon(Icons.arrow_downward, color: category == 'credit' ? Colors.green : Colors.grey),
+                              const SizedBox(height: 4),
+                              Text('Received (Credit)', style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                color: category == 'credit' ? Colors.green : Colors.grey,
+                              )),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () => _saveTransaction(
+                context,
+                personController.text,
+                amountController.text,
+                descController.text,
+                category,
+                existing,
+              ),
+              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00BFA6)),
+              child: Text(isEditing ? 'Update' : 'Add', style: const TextStyle(color: Colors.white)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _saveTransaction(
+    BuildContext context,
+    String person,
+    String amountStr,
+    String description,
+    String category,
+    Transaction? existing,
+  ) async {
+    if (person.isEmpty || amountStr.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please fill person and amount'), backgroundColor: Colors.red),
+      );
+      return;
+    }
+
+    final amount = double.tryParse(amountStr);
+    if (amount == null || amount <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please enter a valid amount'), backgroundColor: Colors.red),
+      );
+      return;
+    }
+
+    final provider = Provider.of<AppProvider>(context, listen: false);
+    final userId = SupabaseService.currentUser?.id;
+    if (userId == null) return;
+
+    Navigator.pop(context);
+
+    try {
+      if (existing != null) {
+        // Update existing
+        final updated = Transaction(
+          id: existing.id,
+          userId: userId,
+          person: person,
+          amount: amount,
+          category: category,
+          timestamp: existing.timestamp,
+          description: description.isEmpty ? null : description,
+        );
+        await provider.updateTransaction(updated);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Transaction updated!'), backgroundColor: Colors.green),
+        );
+      } else {
+        // Add new
+        final transaction = Transaction(
+          id: '',
+          userId: userId,
+          person: person,
+          amount: amount,
+          category: category,
+          timestamp: DateTime.now(),
+          description: description.isEmpty ? null : description,
+        );
+        await provider.addTransaction(transaction);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Transaction added!'), backgroundColor: Colors.green),
+        );
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+      );
+    }
+  }
+
+  Future<void> _deleteTransaction(BuildContext context, Transaction transaction) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Transaction'),
+        content: Text('Are you sure you want to delete the transaction with ${transaction.person}?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      try {
+        await Provider.of<AppProvider>(context, listen: false).deleteTransaction(transaction.id);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Transaction deleted!'), backgroundColor: Colors.green),
+        );
+      } catch (e) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
   }
 
   Widget _buildBalanceCard(AppProvider provider) {
@@ -519,19 +749,19 @@ class _KhaataScreenState extends State<KhaataScreen> {
 
   Widget _buildTransactionsList(AppProvider provider) {
     if (provider.transactions.isEmpty) {
-      return const Center(
+      return Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.receipt_long, size: 64, color: Colors.grey),
-            SizedBox(height: 16),
-            Text(
+            Icon(Icons.receipt_long, size: 64, color: Colors.grey[400]),
+            const SizedBox(height: 16),
+            const Text(
               'No transactions yet',
               style: TextStyle(fontSize: 18, color: Colors.grey),
             ),
-            SizedBox(height: 8),
-            Text(
-              'Start chatting to add transactions',
+            const SizedBox(height: 8),
+            const Text(
+              'Tap + to add a transaction',
               style: TextStyle(color: Colors.grey),
             ),
           ],
@@ -570,13 +800,35 @@ class _KhaataScreenState extends State<KhaataScreen> {
           _formatDateTime(transaction.timestamp),
           style: const TextStyle(color: Colors.grey),
         ),
-        trailing: Text(
-          '${isCredit ? '+' : '-'}₹${transaction.amount.toStringAsFixed(2)}',
-          style: TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.bold,
-            color: isCredit ? Colors.green : Colors.red,
-          ),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              '${isCredit ? '+' : '-'}₹${transaction.amount.toStringAsFixed(2)}',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                color: isCredit ? Colors.green : Colors.red,
+              ),
+            ),
+            PopupMenuButton<String>(
+              onSelected: (value) {
+                if (value == 'edit') {
+                  _showAddTransactionDialog(context, existing: transaction);
+                } else if (value == 'delete') {
+                  _deleteTransaction(context, transaction);
+                }
+              },
+              itemBuilder: (context) => [
+                const PopupMenuItem(value: 'edit', child: Row(
+                  children: [Icon(Icons.edit, size: 18), SizedBox(width: 8), Text('Edit')],
+                )),
+                const PopupMenuItem(value: 'delete', child: Row(
+                  children: [Icon(Icons.delete, size: 18, color: Colors.red), SizedBox(width: 8), Text('Delete', style: TextStyle(color: Colors.red))],
+                )),
+              ],
+            ),
+          ],
         ),
       ),
     );
@@ -634,6 +886,11 @@ class _TodoScreenState extends State<TodoScreen> with SingleTickerProviderStateM
           ],
         ),
       ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: () => _showAddTaskDialog(context),
+        backgroundColor: const Color(0xFF00BFA6),
+        child: const Icon(Icons.add, color: Colors.white),
+      ),
       body: Consumer<AppProvider>(
         builder: (context, provider, child) {
           if (provider.isLoading) {
@@ -657,6 +914,188 @@ class _TodoScreenState extends State<TodoScreen> with SingleTickerProviderStateM
     );
   }
 
+  void _showAddTaskDialog(BuildContext context, {Task? existing}) {
+    final titleController = TextEditingController(text: existing?.title ?? '');
+    DateTime? selectedDate = existing?.dueDate;
+    bool reminder = existing?.reminder ?? false;
+    final isEditing = existing != null;
+
+    showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text(isEditing ? 'Edit Task' : 'Add Task'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: titleController,
+                  decoration: const InputDecoration(
+                    labelText: 'Task Title',
+                    prefixIcon: Icon(Icons.task),
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.calendar_today, color: Color(0xFF00BFA6)),
+                  title: Text(
+                    selectedDate != null 
+                        ? 'Due: ${selectedDate!.day}/${selectedDate!.month}/${selectedDate!.year}'
+                        : 'Select Due Date (optional)',
+                    style: TextStyle(
+                      color: selectedDate != null ? Colors.black : Colors.grey,
+                    ),
+                  ),
+                  trailing: selectedDate != null 
+                      ? IconButton(
+                          icon: const Icon(Icons.clear, size: 18),
+                          onPressed: () => setDialogState(() => selectedDate = null),
+                        )
+                      : null,
+                  onTap: () async {
+                    final picked = await showDatePicker(
+                      context: context,
+                      initialDate: selectedDate ?? DateTime.now(),
+                      firstDate: DateTime.now(),
+                      lastDate: DateTime.now().add(const Duration(days: 365)),
+                    );
+                    if (picked != null) {
+                      setDialogState(() => selectedDate = picked);
+                    }
+                  },
+                ),
+                const Divider(),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Set Reminder'),
+                  subtitle: Text(
+                    reminder ? 'You will be notified on due date' : 'No reminder set',
+                    style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                  ),
+                  value: reminder,
+                  activeColor: const Color(0xFF00BFA6),
+                  secondary: Icon(
+                    reminder ? Icons.notifications_active : Icons.notifications_off,
+                    color: reminder ? const Color(0xFF00BFA6) : Colors.grey,
+                  ),
+                  onChanged: (value) => setDialogState(() => reminder = value),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () => _saveTask(context, titleController.text, selectedDate, reminder, existing),
+              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00BFA6)),
+              child: Text(isEditing ? 'Update' : 'Add', style: const TextStyle(color: Colors.white)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _saveTask(BuildContext context, String title, DateTime? dueDate, bool reminder, Task? existing) async {
+    if (title.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please enter a task title'), backgroundColor: Colors.red),
+      );
+      return;
+    }
+
+    final provider = Provider.of<AppProvider>(context, listen: false);
+    final userId = SupabaseService.currentUser?.id;
+    if (userId == null) return;
+
+    Navigator.pop(context);
+
+    try {
+      if (existing != null) {
+        // Update existing
+        final updated = existing.copyWith(
+          title: title,
+          dueDate: dueDate,
+          reminder: reminder,
+        );
+        await provider.updateTask(updated);
+        
+        // Schedule/cancel notification
+        if (reminder && dueDate != null) {
+          await NotificationService().scheduleTaskReminder(
+            id: updated.id.hashCode,
+            title: 'Task Due: $title',
+            body: 'Your task is due today!',
+            scheduledDate: dueDate,
+          );
+        } else {
+          await NotificationService().cancelNotification(updated.id.hashCode);
+        }
+        
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Task updated!'), backgroundColor: Colors.green),
+        );
+      } else {
+        // Add new
+        final task = Task(
+          id: '',
+          userId: userId,
+          title: title,
+          dueDate: dueDate,
+          completed: false,
+          reminder: reminder,
+          createdAt: DateTime.now(),
+        );
+        await provider.addTask(task);
+        
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Task added!'), backgroundColor: Colors.green),
+        );
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+      );
+    }
+  }
+
+  Future<void> _deleteTask(BuildContext context, Task task) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Task'),
+        content: Text('Are you sure you want to delete "${task.title}"?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      try {
+        await Provider.of<AppProvider>(context, listen: false).deleteTask(task.id);
+        await NotificationService().cancelNotification(task.id.hashCode);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Task deleted!'), backgroundColor: Colors.green),
+        );
+      } catch (e) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
   Widget _buildTaskList(List<Task> tasks, bool isCompleted, AppProvider provider) {
     if (tasks.isEmpty) {
       return Center(
@@ -666,7 +1105,7 @@ class _TodoScreenState extends State<TodoScreen> with SingleTickerProviderStateM
             Icon(
               isCompleted ? Icons.check_circle_outline : Icons.task_outlined,
               size: 64,
-              color: Colors.grey,
+              color: Colors.grey[400],
             ),
             const SizedBox(height: 16),
             Text(
@@ -677,7 +1116,7 @@ class _TodoScreenState extends State<TodoScreen> with SingleTickerProviderStateM
             Text(
               isCompleted 
                   ? 'Complete some tasks to see them here'
-                  : 'Start chatting to add tasks',
+                  : 'Tap + to add a task',
               style: const TextStyle(color: Colors.grey),
             ),
           ],
@@ -735,6 +1174,23 @@ class _TodoScreenState extends State<TodoScreen> with SingleTickerProviderStateM
               const Icon(Icons.notifications_active, color: Color(0xFF00BFA6), size: 20),
             if (isOverdue)
               const Icon(Icons.warning, color: Colors.red, size: 20),
+            PopupMenuButton<String>(
+              onSelected: (value) {
+                if (value == 'edit') {
+                  _showAddTaskDialog(context, existing: task);
+                } else if (value == 'delete') {
+                  _deleteTask(context, task);
+                }
+              },
+              itemBuilder: (context) => [
+                const PopupMenuItem(value: 'edit', child: Row(
+                  children: [Icon(Icons.edit, size: 18), SizedBox(width: 8), Text('Edit')],
+                )),
+                const PopupMenuItem(value: 'delete', child: Row(
+                  children: [Icon(Icons.delete, size: 18, color: Colors.red), SizedBox(width: 8), Text('Delete', style: TextStyle(color: Colors.red))],
+                )),
+              ],
+            ),
           ],
         ),
       ),
@@ -775,6 +1231,7 @@ class _TodoScreenState extends State<TodoScreen> with SingleTickerProviderStateM
     super.dispose();
   }
 }
+
 
 class ProfileScreen extends StatelessWidget {
   const ProfileScreen({super.key});

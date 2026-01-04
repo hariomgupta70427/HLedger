@@ -99,6 +99,51 @@ class AppProvider extends ChangeNotifier {
     }
   }
 
+  Future<void> updateTransaction(Transaction transaction) async {
+    try {
+      print('🔄 AppProvider: Updating transaction...');
+      final updatedTransaction = await SupabaseService.updateTransaction(transaction);
+      final index = _transactions.indexWhere((t) => t.id == transaction.id);
+      if (index != -1) {
+        _transactions[index] = updatedTransaction;
+        _lastLoadTime = DateTime.now();
+        print('✅ AppProvider: Transaction updated');
+        notifyListeners();
+      }
+    } catch (e) {
+      debugPrint('❌ AppProvider: Error updating transaction: $e');
+      rethrow;
+    }
+  }
+
+  Future<void> deleteTransaction(String id) async {
+    try {
+      print('🗑️ AppProvider: Deleting transaction...');
+      await SupabaseService.deleteTransaction(id);
+      _transactions.removeWhere((t) => t.id == id);
+      _lastLoadTime = DateTime.now();
+      print('✅ AppProvider: Transaction deleted');
+      notifyListeners();
+    } catch (e) {
+      debugPrint('❌ AppProvider: Error deleting transaction: $e');
+      rethrow;
+    }
+  }
+
+  Future<void> deleteTask(String id) async {
+    try {
+      print('🗑️ AppProvider: Deleting task...');
+      await SupabaseService.deleteTask(id);
+      _tasks.removeWhere((t) => t.id == id);
+      _lastLoadTime = DateTime.now();
+      print('✅ AppProvider: Task deleted');
+      notifyListeners();
+    } catch (e) {
+      debugPrint('❌ AppProvider: Error deleting task: $e');
+      rethrow;
+    }
+  }
+
   void signOut() {
     _transactions.clear();
     _tasks.clear();

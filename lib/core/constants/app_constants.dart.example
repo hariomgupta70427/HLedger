@@ -20,6 +20,12 @@ class AppConstants {
   static const String geminiEndpoint =
       'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent';
 
+  // OpenRouter API Configuration (Alternative to Gemini)
+  // Get this from https://openrouter.ai/keys
+  static const String openRouterApiUrl = 'https://openrouter.ai/api/v1/chat/completions';
+  static const String openRouterApiKey = 'YOUR_OPENROUTER_API_KEY_HERE';
+  static const String openRouterModel = 'google/gemma-2-9b-it:free'; // Reliable free model
+
   // Database Tables
   static const String usersTable = 'users';
   static const String transactionsTable = 'transactions';
