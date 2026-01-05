@@ -1580,7 +1580,18 @@ class _TodoScreenState extends State<TodoScreen> with SingleTickerProviderStateM
           reminder: reminder,
           createdAt: DateTime.now(),
         );
-        await provider.addTask(task);
+        final savedTask = await provider.addTaskAndReturn(task);
+        
+        // Schedule notification for new task if reminder is enabled
+        if (reminder && dueDate != null && savedTask != null) {
+          await NotificationService().scheduleTaskReminder(
+            id: savedTask.id.hashCode,
+            title: '📋 Task Reminder: $title',
+            body: 'Your task "${title}" is due now!',
+            scheduledDate: dueDate,
+          );
+          print('🔔 Notification scheduled for new task: $title at $dueDate');
+        }
         
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Task added!'), backgroundColor: Colors.green),

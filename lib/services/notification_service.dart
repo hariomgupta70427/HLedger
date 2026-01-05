@@ -17,6 +17,22 @@ class NotificationService {
 
     // Initialize timezone
     tzdata.initializeTimeZones();
+    
+    // Set local timezone
+    final String timeZoneName = DateTime.now().timeZoneName;
+    try {
+      tz.setLocalLocation(tz.getLocation(timeZoneName));
+    } catch (e) {
+      // Fallback to UTC offset calculation
+      final now = DateTime.now();
+      final offset = now.timeZoneOffset;
+      // Try to find a timezone with this offset
+      try {
+        tz.setLocalLocation(tz.getLocation('Asia/Kolkata')); // Default for IST
+      } catch (_) {
+        print('⚠️ Could not set timezone, using UTC');
+      }
+    }
 
     // Android settings
     const AndroidInitializationSettings androidSettings =
@@ -53,12 +69,19 @@ class NotificationService {
             AndroidFlutterLocalNotificationsPlugin>();
 
     if (androidPlugin != null) {
-      await androidPlugin.requestNotificationsPermission();
+      // Request notification permission (Android 13+)
+      final notificationGranted = await androidPlugin.requestNotificationsPermission();
+      print('📱 Notification permission: $notificationGranted');
+      
+      // Request exact alarm permission (Android 12+)
+      final exactAlarmGranted = await androidPlugin.requestExactAlarmsPermission();
+      print('⏰ Exact alarm permission: $exactAlarmGranted');
     }
   }
 
   void _onNotificationTapped(NotificationResponse response) {
     print('📱 Notification tapped: ${response.payload}');
+    // Could navigate to task screen here if needed
   }
 
   Future<void> scheduleTaskReminder({
@@ -73,29 +96,44 @@ class NotificationService {
 
     // Don't schedule if the date is in the past
     if (scheduledDate.isBefore(DateTime.now())) {
-      print('⚠️ Scheduled date is in the past, skipping notification');
+      print('⚠️ Scheduled date is in the past, skipping notification for: $title');
       return;
     }
 
-    final tz.TZDateTime scheduledTZDate = tz.TZDateTime.from(
-      scheduledDate,
+    // Convert to TZDateTime
+    final tz.TZDateTime scheduledTZDate = tz.TZDateTime(
       tz.local,
+      scheduledDate.year,
+      scheduledDate.month,
+      scheduledDate.day,
+      scheduledDate.hour,
+      scheduledDate.minute,
+      scheduledDate.second,
     );
 
-    const AndroidNotificationDetails androidDetails =
-        AndroidNotificationDetails(
+    print('📅 Scheduling notification for: $scheduledTZDate (original: $scheduledDate)');
+
+    // Android notification details with custom sound
+    const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
       'task_reminders',
       'Task Reminders',
-      channelDescription: 'Notifications for task reminders',
-      importance: Importance.high,
+      channelDescription: 'Notifications for task due date reminders',
+      importance: Importance.max,
       priority: Priority.high,
       showWhen: true,
+      enableVibration: true,
+      playSound: true,
+      sound: RawResourceAndroidNotificationSound('notification'), // Uses res/raw/notification.mp3
+      enableLights: true,
+      fullScreenIntent: true, // Wake up device for important notifications
     );
 
+    // iOS notification details
     const DarwinNotificationDetails iosDetails = DarwinNotificationDetails(
       presentAlert: true,
       presentBadge: true,
       presentSound: true,
+      sound: 'notification.mp3', // For iOS
     );
 
     const NotificationDetails notificationDetails = NotificationDetails(
@@ -112,10 +150,11 @@ class NotificationService {
         notificationDetails,
         uiLocalNotificationDateInterpretation:
             UILocalNotificationDateInterpretation.absoluteTime,
-        androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle, // EXACT timing!
+        payload: 'task_$id',
       );
 
-      print('✅ Notification scheduled: "$title" for $scheduledDate');
+      print('✅ Notification scheduled: "$title" for $scheduledTZDate');
     } catch (e) {
       print('❌ Error scheduling notification: $e');
     }
@@ -129,5 +168,49 @@ class NotificationService {
   Future<void> cancelAllNotifications() async {
     await _notificationsPlugin.cancelAll();
     print('🗑️ All notifications cancelled');
+  }
+
+  // Show an immediate notification (for testing)
+  Future<void> showImmediateNotification({
+    required int id,
+    required String title,
+    required String body,
+  }) async {
+    if (!_initialized) await initialize();
+
+    const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
+      'task_reminders',
+      'Task Reminders',
+      channelDescription: 'Notifications for task due date reminders',
+      importance: Importance.max,
+      priority: Priority.high,
+      playSound: true,
+      sound: RawResourceAndroidNotificationSound('notification'),
+    );
+
+    const DarwinNotificationDetails iosDetails = DarwinNotificationDetails(
+      presentAlert: true,
+      presentBadge: true,
+      presentSound: true,
+    );
+
+    const NotificationDetails notificationDetails = NotificationDetails(
+      android: androidDetails,
+      iOS: iosDetails,
+    );
+
+    await _notificationsPlugin.show(
+      id,
+      title,
+      body,
+      notificationDetails,
+    );
+
+    print('✅ Immediate notification shown: "$title"');
+  }
+
+  // Get pending notifications for debugging
+  Future<List<PendingNotificationRequest>> getPendingNotifications() async {
+    return await _notificationsPlugin.pendingNotificationRequests();
   }
 }

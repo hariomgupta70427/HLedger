@@ -82,6 +82,22 @@ class AppProvider extends ChangeNotifier {
     }
   }
 
+  // Returns the saved task with real ID for notification scheduling
+  Future<Task?> addTaskAndReturn(Task task) async {
+    try {
+      print('✅ AppProvider: Adding task (with return)...');
+      final newTask = await SupabaseService.addTask(task);
+      _tasks.insert(0, newTask);
+      _lastLoadTime = DateTime.now();
+      print('✅ AppProvider: Task added with ID: ${newTask.id}');
+      notifyListeners();
+      return newTask;
+    } catch (e) {
+      debugPrint('❌ AppProvider: Error adding task: $e');
+      rethrow;
+    }
+  }
+
   Future<void> updateTask(Task task) async {
     try {
       print('🔄 AppProvider: Updating task...');
