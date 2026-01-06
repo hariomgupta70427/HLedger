@@ -20,8 +20,20 @@ void main() async {
     statusBarIconBrightness: Brightness.dark,
   ));
   
-  await SupabaseService.initialize();
-  await NotificationService().initialize();
+  // Initialize services with error handling
+  try {
+    await SupabaseService.initialize();
+  } catch (e) {
+    debugPrint('⚠️ Supabase initialization failed: $e');
+    // Continue anyway - app will work offline
+  }
+  
+  try {
+    await NotificationService().initialize();
+  } catch (e) {
+    debugPrint('⚠️ Notification service initialization failed: $e');
+    // Continue anyway - notifications just won't work
+  }
   
   runApp(const MyApp());
 }
@@ -52,8 +64,41 @@ class MyApp extends StatelessWidget {
   }
 }
 
-class SplashScreen extends StatelessWidget {
+class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
+
+  @override
+  State<SplashScreen> createState() => _SplashScreenState();
+}
+
+class _SplashScreenState extends State<SplashScreen> {
+  @override
+  void initState() {
+    super.initState();
+    _checkAuthAndNavigate();
+  }
+
+  Future<void> _checkAuthAndNavigate() async {
+    // Give Supabase time to restore session from local storage
+    await Future.delayed(const Duration(milliseconds: 500));
+    
+    if (!mounted) return;
+    
+    // Check if user is already authenticated
+    if (SupabaseService.isAuthenticated) {
+      // User is logged in, go directly to main screen
+      Navigator.of(context).pushReplacement(
+        PageRouteBuilder(
+          pageBuilder: (context, animation, secondaryAnimation) => const DashboardScreen(),
+          transitionsBuilder: (context, animation, secondaryAnimation, child) {
+            return FadeTransition(opacity: animation, child: child);
+          },
+          transitionDuration: const Duration(milliseconds: 300),
+        ),
+      );
+    }
+    // If not authenticated, stay on splash screen with Get Started button
+  }
 
   @override
   Widget build(BuildContext context) {

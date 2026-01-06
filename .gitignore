@@ -39,6 +39,8 @@ android/app/debug/
 android/app/release/
 android/gradle/wrapper/gradle-wrapper.properties
 android/.android
+android/key.properties
+android/app/upload-keystore.jks
 
 # iOS
 ios/.symlinks/

@@ -1,4 +1,4 @@
-package com.example.hledger
+package com.hariverse.hledger
 
 import io.flutter.embedding.android.FlutterActivity
 

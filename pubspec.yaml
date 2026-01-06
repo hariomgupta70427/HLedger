@@ -10,7 +10,6 @@ dependencies:
     sdk: flutter
   supabase_flutter: ^2.10.3
   http: ^1.2.0
-  google_generative_ai: ^0.4.7
   google_sign_in: ^6.2.1
   google_fonts: ^6.1.0
   flutter_local_notifications: ^17.0.0
