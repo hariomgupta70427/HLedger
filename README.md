@@ -54,7 +54,7 @@ HLedger is a Flutter-based AI-powered chat application that combines a **To-Do M
 ### Step 1: Clone the Repository
 
 ```bash
-git clone https://github.com/yourusername/HLedger.git
+git clone https://github.com/hariomgupta70427/HLedger.git
 cd HLedger
 ```
 
