@@ -1,5 +1,6 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../core/constants/app_constants.dart';
+import '../core/utils/retry_helper.dart';
 import '../models/transaction.dart';
 import '../models/task.dart';
 
@@ -13,7 +14,8 @@ class SupabaseService {
     );
   }
 
-  // Auth
+  // ── Auth ──
+
   static User? get currentUser => _client.auth.currentUser;
   static bool get isAuthenticated => currentUser != null;
 
@@ -66,7 +68,7 @@ class SupabaseService {
       case 'User already registered':
         return 'This email is already registered. Please login instead.';
       default:
-        return error.message ?? 'Authentication failed. Please try again.';
+        return error.message;
     }
   }
 
@@ -74,104 +76,131 @@ class SupabaseService {
     await _client.auth.signOut();
   }
 
-  // Transactions
+  // ── Transactions ──
+
   static Future<List<Transaction>> getTransactions() async {
-    final userId = currentUser?.id;
-    if (userId == null) throw Exception('User not authenticated');
+    return RetryHelper.run(() async {
+      final userId = currentUser?.id;
+      if (userId == null) throw Exception('User not authenticated');
 
-    final response = await _client
-        .from(AppConstants.transactionsTable)
-        .select()
-        .eq('user_id', userId)
-        .order('timestamp', ascending: false);
+      final response = await _client
+          .from(AppConstants.transactionsTable)
+          .select()
+          .eq('user_id', userId)
+          .order('created_at', ascending: false);
 
-    return response.map((json) => Transaction.fromJson(json)).toList();
+      return response.map((json) => Transaction.fromJson(json)).toList();
+    });
   }
 
   static Future<Transaction> addTransaction(Transaction transaction) async {
-    try {
+    return RetryHelper.run(() async {
       final response = await _client
           .from(AppConstants.transactionsTable)
-          .insert(transaction.toJsonForInsert())
+          .insert(transaction.toJson())
           .select()
           .single();
 
       return Transaction.fromJson(response);
-    } catch (e) {
-      print('Error adding transaction: $e');
-      print('Transaction data: ${transaction.toJsonForInsert()}');
-      rethrow;
-    }
+    });
   }
 
-  // Tasks
-  static Future<List<Task>> getTasks() async {
+  static Future<Transaction> updateTransaction(Transaction transaction) async {
+    return RetryHelper.run(() async {
+      final response = await _client
+          .from(AppConstants.transactionsTable)
+          .update(transaction.toJson())
+          .eq('id', transaction.id)
+          .select()
+          .single();
+
+      return Transaction.fromJson(response);
+    });
+  }
+
+  static Future<void> deleteTransaction(String id) async {
+    return RetryHelper.run(() async {
+      await _client
+          .from(AppConstants.transactionsTable)
+          .delete()
+          .eq('id', id);
+    });
+  }
+
+  /// Real-time stream of user's transactions, ordered by created_at desc.
+  static Stream<List<Transaction>> streamTransactions() {
     final userId = currentUser?.id;
-    if (userId == null) throw Exception('User not authenticated');
+    if (userId == null) return const Stream.empty();
 
-    final response = await _client
-        .from(AppConstants.tasksTable)
-        .select()
+    return _client
+        .from(AppConstants.transactionsTable)
+        .stream(primaryKey: ['id'])
         .eq('user_id', userId)
-        .order('created_at', ascending: false);
+        .order('created_at', ascending: false)
+        .map((data) => data.map((json) => Transaction.fromJson(json)).toList());
+  }
 
-    return response.map((json) => Task.fromJson(json)).toList();
+  // ── Tasks ──
+
+  static Future<List<Task>> getTasks() async {
+    return RetryHelper.run(() async {
+      final userId = currentUser?.id;
+      if (userId == null) throw Exception('User not authenticated');
+
+      final response = await _client
+          .from(AppConstants.tasksTable)
+          .select()
+          .eq('user_id', userId)
+          .order('created_at', ascending: false);
+
+      return response.map((json) => Task.fromJson(json)).toList();
+    });
   }
 
   static Future<Task> addTask(Task task) async {
-    try {
+    return RetryHelper.run(() async {
       final response = await _client
           .from(AppConstants.tasksTable)
-          .insert(task.toJsonForInsert())
+          .insert(task.toJson())
           .select()
           .single();
 
       return Task.fromJson(response);
-    } catch (e) {
-      print('Error adding task: $e');
-      print('Task data: ${task.toJsonForInsert()}');
-      rethrow;
-    }
+    });
   }
 
   static Future<Task> updateTask(Task task) async {
-    final response = await _client
-        .from(AppConstants.tasksTable)
-        .update(task.toJson())
-        .eq('id', task.id)
-        .select()
-        .single();
+    return RetryHelper.run(() async {
+      final response = await _client
+          .from(AppConstants.tasksTable)
+          .update(task.toJson())
+          .eq('id', task.id)
+          .select()
+          .single();
 
-    return Task.fromJson(response);
-  }
-
-  static Future<Transaction> updateTransaction(Transaction transaction) async {
-    final response = await _client
-        .from(AppConstants.transactionsTable)
-        .update({
-          'person': transaction.person,
-          'amount': transaction.amount,
-          'category': transaction.category,
-          'description': transaction.description,
-        })
-        .eq('id', transaction.id)
-        .select()
-        .single();
-
-    return Transaction.fromJson(response);
-  }
-
-  static Future<void> deleteTransaction(String id) async {
-    await _client
-        .from(AppConstants.transactionsTable)
-        .delete()
-        .eq('id', id);
+      return Task.fromJson(response);
+    });
   }
 
   static Future<void> deleteTask(String id) async {
-    await _client
+    return RetryHelper.run(() async {
+      await _client
+          .from(AppConstants.tasksTable)
+          .delete()
+          .eq('id', id);
+    });
+  }
+
+  /// Real-time stream of user's tasks, ordered by created_at desc.
+  static Stream<List<Task>> streamTasks() {
+    final userId = currentUser?.id;
+    if (userId == null) return const Stream.empty();
+
+    return _client
         .from(AppConstants.tasksTable)
-        .delete()
-        .eq('id', id);
+        .stream(primaryKey: ['id'])
+        .eq('user_id', userId)
+        .order('created_at', ascending: false)
+        .map((data) => data.map((json) => Task.fromJson(json)).toList());
   }
 }

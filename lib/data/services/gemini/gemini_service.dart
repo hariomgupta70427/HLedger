@@ -1,18 +1,218 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../../../core/constants/app_constants.dart';
+import '../../../core/utils/input_validator.dart';
 
+/// Response from the AI service, parsed from JSON.
+class AIChatResponse {
+  final String action; // 'NONE', 'ADD_TRANSACTION', 'ADD_TASK', 'GET_BALANCE'
+  final String reply;
+  final Map<String, dynamic>? data;
+
+  const AIChatResponse({
+    required this.action,
+    required this.reply,
+    this.data,
+  });
+
+  factory AIChatResponse.fromJson(Map<String, dynamic> json) {
+    return AIChatResponse(
+      action: json['action'] as String? ?? 'NONE',
+      reply: json['reply'] as String? ?? '',
+      data: json['data'] as Map<String, dynamic>?,
+    );
+  }
+}
+
+/// AI chat service using OpenRouter with model fallback chain.
+///
+/// Keeps the filename as gemini_service.dart to avoid breaking imports.
+class GeminiService {
+  static const String _baseUrl = 'https://openrouter.ai/api/v1/chat/completions';
+
+  static Map<String, String> get _headers => {
+    'Content-Type': 'application/json',
+    'Authorization': 'Bearer ${AppConstants.openRouterKey}',
+    'HTTP-Referer': 'https://hledger.app',
+    'X-Title': 'HLedger',
+  };
+
+  static const String _systemPrompt = '''
+You are HLedger — a personal finance and task buddy.
+Talk like a close friend on WhatsApp.
+Casual, warm, short messages. Max 2 sentences in reply.
+
+NEVER say:
+- "I'm here to help you track transactions"
+- "You can tell me about payments"
+- Any corporate filler phrase
+
+Match user's language — Hindi, English, or Hinglish.
+Use "yaar", "bhai" if they write in Hinglish.
+
+ALWAYS respond with valid JSON only. Nothing outside JSON.
+
+When user mentions spending or receiving money:
+{"action":"ADD_TRANSACTION","data":{"amount":200,"type":"expense","category":"Food","description":"chai"},"reply":"Done ✓ ₹200 chai added."}
+
+When user mentions a task or reminder:
+{"action":"ADD_TASK","data":{"title":"Call mom","due_date":"2025-03-22","priority":"medium"},"reply":"Added 📝 Call mom — tomorrow."}
+
+When user asks about balance/spending:
+{"action":"GET_BALANCE","reply":"Checking your Khaata..."}
+
+Normal conversation (no action):
+{"action":"NONE","reply":"Your casual response here."}
+
+Categories: Food, Transport, Shopping, Bills, Entertainment, Health, Education, Work, Other
+
+type must be: "income" or "expense" only
+priority must be: "low", "medium", or "high" only
+due_date format: "YYYY-MM-DD" or null
+
+Parse Hindi/Hinglish naturally:
+"diye" / "paid" / "gave" / "spent" = expense
+"mile" / "received" / "got" / "earned" = income
+"kal" = tomorrow, "aaj" = today
+"karna hai" / "yaad dila" = task
+''';
+
+  /// Send a message to AI with conversation history.
+  ///
+  /// Returns parsed [AIChatResponse] with action and reply.
+  /// On all-model failure, returns a friendly fallback message.
+  Future<AIChatResponse> sendMessage(
+    List<Map<String, dynamic>> history,
+    String userMessage,
+  ) async {
+    final sanitized = InputValidator.sanitizeForAI(userMessage);
+
+    // Build messages list: system + last 10 history + current
+    final messages = <Map<String, dynamic>>[
+      {'role': 'system', 'content': _systemPrompt},
+      ...history.length > 10 ? history.sublist(history.length - 10) : history,
+      {'role': 'user', 'content': sanitized},
+    ];
+
+    // Try each model in order
+    for (final model in AppConstants.openRouterModels) {
+      try {
+        final result = await _callModel(model, messages);
+        if (result != null) return result;
+      } catch (_) {
+        continue;
+      }
+    }
+
+    // All models failed — friendly fallback
+    return const AIChatResponse(
+      action: 'NONE',
+      reply: 'Kuch gadbad ho gayi 😅 Dobara try karo?',
+    );
+  }
+
+  /// Call a specific model and parse the response.
+  /// Returns null if the model fails or returns empty.
+  Future<AIChatResponse?> _callModel(
+    String model,
+    List<Map<String, dynamic>> messages,
+  ) async {
+    final response = await http
+        .post(
+          Uri.parse(_baseUrl),
+          headers: _headers,
+          body: jsonEncode({
+            'model': model,
+            'messages': messages,
+            'temperature': 0.7,
+            'max_tokens': 250,
+          }),
+        )
+        .timeout(const Duration(seconds: 15));
+
+    if (response.statusCode != 200) return null;
+
+    final data = jsonDecode(response.body);
+    final content = data['choices']?[0]?['message']?['content'] as String?;
+    if (content == null || content.isEmpty) return null;
+
+    // Try to parse as JSON
+    try {
+      String jsonText = content.trim();
+
+      // Remove markdown code blocks if present
+      if (jsonText.startsWith('```json')) {
+        jsonText = jsonText.substring(7);
+      } else if (jsonText.startsWith('```')) {
+        jsonText = jsonText.substring(3);
+      }
+      if (jsonText.endsWith('```')) {
+        jsonText = jsonText.substring(0, jsonText.length - 3);
+      }
+      jsonText = jsonText.trim();
+
+      final parsed = jsonDecode(jsonText) as Map<String, dynamic>;
+      return AIChatResponse.fromJson(parsed);
+    } catch (_) {
+      // If JSON parsing fails, treat the raw text as a plain reply
+      return AIChatResponse(action: 'NONE', reply: content.trim());
+    }
+  }
+
+  // ── Legacy compatibility ──
+
+  /// Old API used by existing code. Wraps [sendMessage] with the old format.
+  Future<GeminiChatResponse> chatWithAI(String message) async {
+    final result = await sendMessage([], message);
+
+    String type = 'normal';
+    String? category;
+    double? amount;
+    String? person;
+    String? task;
+    DateTime? dueDate;
+    bool reminderNeeded = false;
+
+    if (result.action == 'ADD_TRANSACTION' && result.data != null) {
+      type = 'transaction';
+      amount = (result.data!['amount'] as num?)?.toDouble();
+      category = result.data!['type'] == 'income' ? 'credit' : 'debit';
+      person = result.data!['description'] as String?;
+    } else if (result.action == 'ADD_TASK' && result.data != null) {
+      type = 'task';
+      task = result.data!['title'] as String?;
+      final dueDateStr = result.data!['due_date'] as String?;
+      if (dueDateStr != null) {
+        dueDate = DateTime.tryParse(dueDateStr);
+        reminderNeeded = dueDate != null;
+      }
+    }
+
+    return GeminiChatResponse(
+      aiMessage: result.reply,
+      type: type,
+      category: category,
+      amount: amount,
+      person: person,
+      task: task,
+      dueDate: dueDate,
+      reminderNeeded: reminderNeeded,
+    );
+  }
+}
+
+/// Legacy response class for backward compatibility.
 class GeminiChatResponse {
-  final String aiMessage; // The conversational response from AI
+  final String aiMessage;
   final String type; // 'normal', 'transaction', or 'task'
-  final String? category; // 'credit' or 'debit' for transactions
+  final String? category;
   final double? amount;
   final String? person;
   final String? task;
   final DateTime? dueDate;
   final bool reminderNeeded;
 
-  GeminiChatResponse({
+  const GeminiChatResponse({
     required this.aiMessage,
     required this.type,
     this.category,
@@ -22,203 +222,4 @@ class GeminiChatResponse {
     this.dueDate,
     required this.reminderNeeded,
   });
-
-  factory GeminiChatResponse.fromJson(Map<String, dynamic> json) {
-    return GeminiChatResponse(
-      aiMessage: json['ai_message'] ?? '',
-      type: json['type'] ?? 'normal',
-      category: json['category'],
-      amount: json['amount']?.toDouble(),
-      person: json['person'],
-      task: json['task'],
-      dueDate: json['due_date'] != null ? DateTime.tryParse(json['due_date']) : null,
-      reminderNeeded: json['reminder_needed'] ?? false,
-    );
-  }
-}
-
-class GeminiService {
-  // List of free models to try in order of preference
-  static const List<String> _freeModels = [
-    'google/gemma-2-9b-it:free',
-    'meta-llama/llama-3.2-3b-instruct:free', 
-    'mistralai/mistral-7b-instruct:free',
-  ];
-
-  /// Main method for chat - returns conversational AI response with categorization
-  Future<GeminiChatResponse> chatWithAI(String message) async {
-    final prompt = '''
-You are HLedger AI, a helpful assistant for managing finances and tasks. Analyze the user's message and respond naturally while also categorizing it.
-
-User message: "$message"
-
-Instructions:
-1. Provide a natural, friendly conversational response
-2. Categorize the message as "normal", "transaction", or "task":
-   - "transaction": mentions money, amounts, giving/receiving money, payments
-   - "task": mentions tasks, assignments, work to do, reminders, deadlines
-   - "normal": casual conversation, questions, greetings, etc.
-3. For transactions: extract person, amount, and category (credit=received, debit=gave)
-4. For tasks: extract task description and due date
-5. Parse Hindi/Hinglish: "diye"=gave (debit), "mile"=received (credit), "kal"=tomorrow, "aaj"=today
-
-Return ONLY valid JSON:
-{
-  "ai_message": "Your natural conversational response here",
-  "type": "normal" or "transaction" or "task",
-  "category": "credit" or "debit" (only for transactions),
-  "amount": number (only for transactions),
-  "person": "name" (only for transactions),
-  "task": "task description" (only for tasks),
-  "due_date": "YYYY-MM-DD" (only for tasks with dates),
-  "reminder_needed": true/false
-}
-
-Example for transaction:
-User: "I gave Rahul 500"
-Response: {"ai_message": "Got it! I've recorded that you gave Rahul ₹500.", "type": "transaction", "category": "debit", "amount": 500, "person": "Rahul", "reminder_needed": false}
-
-Example for normal chat:
-User: "Hello!"
-Response: {"ai_message": "Hello! How can I help you today? I can help you track transactions and manage tasks.", "type": "normal", "reminder_needed": false}
-''';
-
-    // Try primary model from constants first, then fallback models
-    final modelsToTry = [AppConstants.openRouterModel, ..._freeModels];
-    
-    for (final model in modelsToTry) {
-      try {
-        print('🚀 Trying model: $model for message: "$message"');
-        
-        final response = await http.post(
-          Uri.parse(AppConstants.openRouterApiUrl),
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer ${AppConstants.openRouterApiKey}',
-            'HTTP-Referer': 'https://hledger.app',
-            'X-Title': 'HLedger',
-          },
-          body: jsonEncode({
-            'model': model,
-            'messages': [
-              {
-                'role': 'user',
-                'content': prompt,
-              }
-            ],
-          }),
-        );
-
-        print('📥 Response from $model (status: ${response.statusCode})');
-        
-        if (response.statusCode == 429) {
-          print('⚠️ Model $model is rate-limited, trying next...');
-          continue; // Try next model
-        }
-        
-        if (response.statusCode != 200) {
-          print('❌ API Error: ${response.body}');
-          continue; // Try next model
-        }
-
-        final responseData = jsonDecode(response.body);
-        print('📄 Raw API response: $responseData');
-        
-        final aiText = responseData['choices'][0]['message']['content'] as String;
-        print('📝 AI response text: $aiText');
-
-        // Extract JSON from response
-        String jsonText = aiText.trim();
-        
-        // Remove markdown code blocks if present
-        if (jsonText.startsWith('```json')) {
-          jsonText = jsonText.substring(7);
-        }
-        if (jsonText.startsWith('```')) {
-          jsonText = jsonText.substring(3);
-        }
-        if (jsonText.endsWith('```')) {
-          jsonText = jsonText.substring(0, jsonText.length - 3);
-        }
-        
-        jsonText = jsonText.trim();
-        
-        print('📋 Cleaned JSON: $jsonText');
-        
-        final jsonData = json.decode(jsonText);
-        final result = GeminiChatResponse.fromJson(jsonData);
-        print('✅ Successfully parsed response: type=${result.type}, message=${result.aiMessage}');
-        return result;
-      } catch (e) {
-        print('❌ Error with model $model: $e');
-        continue; // Try next model
-      }
-    }
-    
-    // All models failed, use fallback
-    print('❌ All models failed, using fallback categorization');
-    return _fallbackChat(message);
-  }
-
-  GeminiChatResponse _fallbackChat(String message) {
-    print('⚠️  Using fallback categorization for: "$message"');
-    final lowerMessage = message.toLowerCase();
-    
-    // Check for transaction keywords
-    final transactionKeywords = ['diye', 'mile', 'paid', 'received', '₹', 'rs', 'rupees', 'gave', 'give'];
-    final taskKeywords = ['karna', 'complete', 'assignment', 'task', 'reminder', 'kal', 'tomorrow', 'remind'];
-    
-    bool isTransaction = transactionKeywords.any((keyword) => lowerMessage.contains(keyword));
-    bool isTask = taskKeywords.any((keyword) => lowerMessage.contains(keyword));
-    
-    print('🔍 Fallback detection: isTransaction=$isTransaction, isTask=$isTask');
-    
-    if (isTransaction) {
-      // Try to extract amount
-      final amountRegex = RegExp(r'(\d+(?:\.\d+)?)');
-      final amountMatch = amountRegex.firstMatch(message);
-      final amount = amountMatch != null ? double.tryParse(amountMatch.group(1)!) : 0.0;
-      
-      // Determine category
-      final isDebit = lowerMessage.contains('diye') || lowerMessage.contains('paid') || lowerMessage.contains('gave');
-      final category = isDebit ? 'debit' : 'credit';
-      
-      print('💰 Fallback transaction: amount=$amount, category=$category');
-      
-      return GeminiChatResponse(
-        aiMessage: 'I\'ve recorded a ${category == 'debit' ? 'payment' : 'receipt'} of ₹${amount?.toStringAsFixed(0) ?? '0'}.',
-        type: 'transaction',
-        category: category,
-        amount: amount,
-        person: 'Unknown',
-        reminderNeeded: false,
-      );
-    } else if (isTask) {
-      // Check for due date
-      DateTime? dueDate;
-      if (lowerMessage.contains('kal') || lowerMessage.contains('tomorrow')) {
-        dueDate = DateTime.now().add(const Duration(days: 1));
-      }
-      
-      print('✅ Fallback task: task=$message, dueDate=$dueDate');
-      
-      return GeminiChatResponse(
-        aiMessage: dueDate != null 
-            ? 'Task added! I\'ll remind you tomorrow.'
-            : 'Task added to your list!',
-        type: 'task',
-        task: message,
-        dueDate: dueDate,
-        reminderNeeded: dueDate != null,
-      );
-    }
-    
-    // Normal conversation
-    print('💬 Fallback: normal conversation');
-    return GeminiChatResponse(
-      aiMessage: 'I\'m here to help you track transactions and manage tasks. You can tell me about payments you made or received, or add tasks you need to complete!',
-      type: 'normal',
-      reminderNeeded: false,
-    );
-  }
 }

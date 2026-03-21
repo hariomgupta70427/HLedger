@@ -1,13 +1,15 @@
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
+import 'package:flutter_animate/flutter_animate.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:provider/provider.dart';
 import '../../core/theme/app_theme.dart';
 import '../../data/services/gemini/gemini_service.dart';
-import '../../providers/app_provider.dart';
-import '../../services/chat_history_service.dart';
 import '../../models/transaction.dart';
 import '../../models/task.dart';
+import '../../providers/app_provider.dart';
+import '../../services/chat_history_service.dart';
 import '../../services/supabase_service.dart';
+import '../../shared/widgets/typing_indicator.dart';
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key});
@@ -18,9 +20,10 @@ class ChatScreen extends StatefulWidget {
 
 class _ChatScreenState extends State<ChatScreen> {
   final TextEditingController _messageController = TextEditingController();
-  final List<ChatMessage> _messages = [];
   final ScrollController _scrollController = ScrollController();
   final GeminiService _geminiService = GeminiService();
+  final List<ChatMessage> _messages = [];
+  final List<Map<String, dynamic>> _chatHistory = [];
   bool _isLoading = false;
 
   @override
@@ -31,9 +34,16 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _loadChatHistory() async {
     final history = await ChatHistoryService.loadChatHistory();
-    if (history.isNotEmpty) {
+    if (history.isNotEmpty && mounted) {
       setState(() {
         _messages.addAll(history);
+        // Build chat history for AI context
+        for (final msg in history) {
+          _chatHistory.add({
+            'role': msg.isUser ? 'user' : 'assistant',
+            'content': msg.text,
+          });
+        }
       });
       _scrollToBottom();
     }
@@ -41,61 +51,56 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    
     return Scaffold(
-      body: Container(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: isDark 
-                ? [const Color(0xFF0F172A), const Color(0xFF1E293B)]
-                : [const Color(0xFFF8FAFC), const Color(0xFFE2E8F0)],
-          ),
-        ),
-        child: SafeArea(
-          child: Column(
-            children: [
-              // Custom App Bar
-              _buildAppBar(isDark),
-              // Messages Area
-              Expanded(
-                child: _messages.isEmpty
-                    ? _buildEmptyState(isDark)
-                    : ListView.builder(
-                        controller: _scrollController,
-                        padding: const EdgeInsets.all(16),
-                        itemCount: _messages.length,
-                        itemBuilder: (context, index) {
-                          final message = _messages[index];
-                          return _buildMessageBubble(message, isDark);
-                        },
-                      ),
-              ),
-              if (_isLoading) _buildLoadingIndicator(isDark),
-              _buildMessageInput(isDark),
-            ],
-          ),
+      backgroundColor: AppColors.background,
+      body: SafeArea(
+        child: Column(
+          children: [
+            _buildAppBar(),
+            Expanded(
+              child: _messages.isEmpty
+                  ? _buildEmptyState()
+                  : ListView.builder(
+                      controller: _scrollController,
+                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+                      itemCount: _messages.length + (_isLoading ? 1 : 0),
+                      itemBuilder: (context, index) {
+                        if (index == _messages.length && _isLoading) {
+                          return const TypingIndicator();
+                        }
+                        return _buildMessageBubble(_messages[index]);
+                      },
+                    ),
+            ),
+            _buildInputBar(),
+          ],
         ),
       ),
     );
   }
 
-  Widget _buildAppBar(bool isDark) {
+  Widget _buildAppBar() {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       child: Row(
         children: [
           Container(
-            padding: const EdgeInsets.all(10),
+            width: 40,
+            height: 40,
             decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                colors: [Color(0xFF00BFA6), Color(0xFF00E5CC)],
-              ),
-              borderRadius: BorderRadius.circular(14),
+              color: AppColors.accent,
+              borderRadius: BorderRadius.circular(12),
             ),
-            child: const Icon(Icons.chat_rounded, color: Colors.white, size: 22),
+            child: const Center(
+              child: Text(
+                'H',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -105,77 +110,73 @@ class _ChatScreenState extends State<ChatScreen> {
                 Text(
                   'HLedger Chat',
                   style: GoogleFonts.inter(
-                    fontSize: 18,
+                    fontSize: 17,
                     fontWeight: FontWeight.bold,
-                    color: isDark ? Colors.white : const Color(0xFF1A1D29),
+                    color: AppColors.textPrimary,
                   ),
                   overflow: TextOverflow.ellipsis,
                 ),
                 Text(
-                  'AI-powered assistant',
+                  'Your finance buddy',
                   style: GoogleFonts.inter(
                     fontSize: 12,
-                    color: isDark ? Colors.white60 : const Color(0xFF6B7280),
+                    color: AppColors.textSecondary,
                   ),
-                  overflow: TextOverflow.ellipsis,
                 ),
               ],
             ),
           ),
-          Container(
-            decoration: BoxDecoration(
-              color: isDark ? const Color(0xFF1E293B) : Colors.white,
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: IconButton(
-              icon: Icon(
-                Icons.delete_outline_rounded,
-                color: isDark ? Colors.white60 : const Color(0xFF6B7280),
-              ),
-              onPressed: _clearHistory,
-              tooltip: 'Clear chat history',
-            ),
+          IconButton(
+            onPressed: _clearHistory,
+            icon: const Icon(Icons.delete_outline_rounded, color: AppColors.textSecondary),
+            tooltip: 'Clear chat',
           ),
         ],
       ),
     );
   }
 
-  Widget _buildEmptyState(bool isDark) {
+  Widget _buildEmptyState() {
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Container(
-            padding: const EdgeInsets.all(24),
-            decoration: BoxDecoration(
-              color: (isDark ? Colors.white : const Color(0xFF00BFA6)).withAlpha(25),
+            width: 64,
+            height: 64,
+            decoration: const BoxDecoration(
+              color: AppColors.accent,
               shape: BoxShape.circle,
             ),
-            child: Icon(
-              Icons.chat_bubble_outline_rounded,
-              size: 64,
-              color: isDark ? Colors.white38 : const Color(0xFF00BFA6),
+            child: const Center(
+              child: Text(
+                'H',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 28,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
             ),
           ),
-          const SizedBox(height: 24),
+          const SizedBox(height: 20),
           Text(
-            'Start a conversation!',
+            'Hey 👋',
             style: GoogleFonts.inter(
-              fontSize: 22,
+              fontSize: 24,
               fontWeight: FontWeight.bold,
-              color: isDark ? Colors.white : const Color(0xFF1A1D29),
+              color: AppColors.textPrimary,
             ),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 8),
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 40),
+            padding: const EdgeInsets.symmetric(horizontal: 48),
             child: Text(
-              'I can help you track transactions and manage tasks. Just chat with me naturally!',
+              'Tell me what you spent, or what you need to do.',
               textAlign: TextAlign.center,
               style: GoogleFonts.inter(
-                fontSize: 14,
-                color: isDark ? Colors.white60 : const Color(0xFF6B7280),
+                fontSize: 15,
+                color: AppColors.textSecondary,
               ),
             ),
           ),
@@ -184,141 +185,141 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  Widget _buildMessageBubble(ChatMessage message, bool isDark) {
+  Widget _buildMessageBubble(ChatMessage message) {
     final isUser = message.isUser;
-    
-    return Align(
-      alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
-        margin: const EdgeInsets.symmetric(vertical: 6),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        decoration: BoxDecoration(
-          gradient: isUser 
-              ? const LinearGradient(colors: [Color(0xFF00BFA6), Color(0xFF00E5CC)])
-              : null,
-          color: isUser 
-              ? null 
-              : (isDark ? const Color(0xFF1E293B) : Colors.white),
-          borderRadius: BorderRadius.circular(20).copyWith(
-            bottomRight: isUser ? const Radius.circular(4) : null,
-            bottomLeft: !isUser ? const Radius.circular(4) : null,
+
+    if (isUser) {
+      // User bubble — right aligned
+      return Align(
+        alignment: Alignment.centerRight,
+        child: Container(
+          margin: const EdgeInsets.symmetric(vertical: 4),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          constraints: BoxConstraints(
+            maxWidth: MediaQuery.of(context).size.width * 0.75,
           ),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withAlpha(10),
-              blurRadius: 10,
-              offset: const Offset(0, 4),
+          decoration: BoxDecoration(
+            color: AppColors.accent,
+            borderRadius: const BorderRadius.only(
+              topLeft: Radius.circular(18),
+              topRight: Radius.circular(18),
+              bottomLeft: Radius.circular(18),
+              bottomRight: Radius.circular(4),
+            ),
+          ),
+          child: Text(
+            message.text,
+            style: GoogleFonts.inter(
+              fontSize: 15,
+              fontWeight: FontWeight.w500,
+              color: Colors.white,
+            ),
+          ),
+        ),
+      ).animate().fadeIn(duration: 200.ms).slideY(begin: 0.3, duration: 200.ms);
+    }
+
+    // AI bubble — left aligned with avatar
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Avatar
+            Container(
+              width: 28,
+              height: 28,
+              decoration: const BoxDecoration(
+                color: AppColors.accent,
+                shape: BoxShape.circle,
+              ),
+              child: const Center(
+                child: Text(
+                  'H',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 13,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            // Bubble
+            Flexible(
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                constraints: BoxConstraints(
+                  maxWidth: MediaQuery.of(context).size.width * 0.72,
+                ),
+                decoration: const BoxDecoration(
+                  color: AppColors.surface2,
+                  borderRadius: BorderRadius.only(
+                    topLeft: Radius.circular(18),
+                    topRight: Radius.circular(18),
+                    bottomRight: Radius.circular(18),
+                    bottomLeft: Radius.circular(4),
+                  ),
+                ),
+                child: Text(
+                  message.text,
+                  style: GoogleFonts.inter(
+                    fontSize: 15,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+              ),
             ),
           ],
         ),
-        constraints: BoxConstraints(
-          maxWidth: MediaQuery.of(context).size.width * 0.75,
-        ),
-        child: Text(
-          message.text,
-          style: GoogleFonts.inter(
-            fontSize: 15,
-            color: isUser 
-                ? Colors.white 
-                : (isDark ? Colors.white : const Color(0xFF1A1D29)),
-          ),
-        ),
       ),
-    );
+    ).animate().fadeIn(duration: 200.ms).slideY(begin: 0.3, duration: 200.ms);
   }
 
-  Widget _buildLoadingIndicator(bool isDark) {
-    return Padding(
-      padding: const EdgeInsets.all(12),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const SizedBox(
-            width: 20,
-            height: 20,
-            child: CircularProgressIndicator(
-              color: Color(0xFF00BFA6),
-              strokeWidth: 2,
-            ),
-          ),
-          const SizedBox(width: 12),
-          Text(
-            'AI is thinking...',
-            style: GoogleFonts.inter(
-              color: isDark ? Colors.white60 : const Color(0xFF6B7280),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildMessageInput(bool isDark) {
+  Widget _buildInputBar() {
     return Container(
-      padding: const EdgeInsets.all(16),
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF1E293B) : Colors.white,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withAlpha(10),
-            blurRadius: 20,
-            offset: const Offset(0, -4),
-          ),
-        ],
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(28),
+        border: Border.all(color: AppColors.border),
       ),
       child: Row(
         children: [
           Expanded(
             child: TextField(
               controller: _messageController,
-              style: GoogleFonts.inter(
-                color: isDark ? Colors.white : const Color(0xFF1A1D29),
-              ),
+              style: GoogleFonts.inter(color: Colors.white, fontSize: 15),
               decoration: InputDecoration(
-                hintText: 'Type your message...',
-                hintStyle: GoogleFonts.inter(
-                  color: isDark ? Colors.white38 : const Color(0xFF9CA3AF),
-                ),
-                filled: true,
-                fillColor: isDark ? const Color(0xFF0F172A) : const Color(0xFFF1F5F9),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(16),
-                  borderSide: BorderSide.none,
-                ),
-                contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+                hintText: 'Type anything...',
+                hintStyle: GoogleFonts.inter(color: AppColors.textSecondary),
+                border: InputBorder.none,
+                contentPadding: EdgeInsets.zero,
+                isDense: true,
               ),
               onSubmitted: (_) => _sendMessage(),
               maxLines: null,
+              textInputAction: TextInputAction.send,
             ),
           ),
-          const SizedBox(width: 12),
-          Container(
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                colors: [Color(0xFF00BFA6), Color(0xFF00E5CC)],
+          const SizedBox(width: 8),
+          GestureDetector(
+            onTap: _isLoading ? null : _sendMessage,
+            child: Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: _isLoading ? AppColors.surface2 : AppColors.accent,
+                shape: BoxShape.circle,
               ),
-              borderRadius: BorderRadius.circular(16),
-              boxShadow: [
-                BoxShadow(
-                  color: const Color(0xFF00BFA6).withAlpha(100),
-                  blurRadius: 12,
-                  offset: const Offset(0, 4),
-                ),
-              ],
-            ),
-            child: Material(
-              color: Colors.transparent,
-              child: InkWell(
-                onTap: _isLoading ? null : _sendMessage,
-                borderRadius: BorderRadius.circular(16),
-                child: Container(
-                  padding: const EdgeInsets.all(14),
-                  child: Icon(
-                    Icons.send_rounded,
-                    color: _isLoading ? Colors.white60 : Colors.white,
-                  ),
-                ),
+              child: Icon(
+                Icons.send_rounded,
+                color: _isLoading ? AppColors.textSecondary : Colors.white,
+                size: 18,
               ),
             ),
           ),
@@ -331,7 +332,7 @@ class _ChatScreenState extends State<ChatScreen> {
     final text = _messageController.text.trim();
     if (text.isEmpty) return;
 
-    // Add user message
+    // Add user message immediately
     final userMessage = ChatMessage(
       text: text,
       isUser: true,
@@ -346,13 +347,15 @@ class _ChatScreenState extends State<ChatScreen> {
     _messageController.clear();
     _scrollToBottom();
 
+    // Add to AI history
+    _chatHistory.add({'role': 'user', 'content': text});
+
     try {
-      // Get AI response with categorization
-      final response = await _geminiService.chatWithAI(text);
-      
-      // Add AI message
+      final response = await _geminiService.sendMessage(_chatHistory, text);
+
+      // Add AI reply
       final aiMessage = ChatMessage(
-        text: response.aiMessage,
+        text: response.reply,
         isUser: false,
         timestamp: DateTime.now(),
       );
@@ -361,129 +364,96 @@ class _ChatScreenState extends State<ChatScreen> {
         _messages.add(aiMessage);
       });
 
-      // Handle categorization
-      await _handleCategorization(response);
+      _chatHistory.add({'role': 'assistant', 'content': response.reply});
+
+      // Handle actions
+      await _handleAction(response);
 
       // Save chat history
       await ChatHistoryService.saveChatHistory(_messages);
-      
-    } catch (e, stackTrace) {
-      print('❌ Error in _sendMessage: $e');
-      print('❌ Stack trace: $stackTrace');
-      
-      // Add error message with details
+    } catch (e) {
       final errorMessage = ChatMessage(
-        text: 'Error: ${e.toString()}\n\nPlease check:\n• Internet connection\n• API key is valid',
+        text: 'Oops, kuch gadbad ho gayi 😅\nDobara try karo!',
         isUser: false,
         timestamp: DateTime.now(),
       );
-
       setState(() {
         _messages.add(errorMessage);
       });
     } finally {
-      setState(() => _isLoading = false);
-      _scrollToBottom();
+      if (mounted) {
+        setState(() => _isLoading = false);
+        _scrollToBottom();
+      }
     }
   }
 
-  Future<void> _handleCategorization(GeminiChatResponse response) async {
+  Future<void> _handleAction(AIChatResponse response) async {
     if (!mounted) return;
 
-    print('🔄 Handling categorization: type=${response.type}');
+    final userId = SupabaseService.currentUser?.id;
+    if (userId == null) return;
 
     final appProvider = Provider.of<AppProvider>(context, listen: false);
-    final userId = SupabaseService.currentUser?.id;
-
-    if (userId == null) {
-      print('⚠️  User not authenticated, skipping categorization save');
-      return;
-    }
 
     try {
-      if (response.type == 'transaction' && response.amount != null && response.person != null) {
-        print('💰 Creating transaction: person=${response.person}, amount=${response.amount}, category=${response.category}');
-        // Create and save transaction
+      if (response.action == 'ADD_TRANSACTION' && response.data != null) {
+        final data = response.data!;
         final transaction = Transaction(
-          id: '', // Will be generated by Supabase
+          id: '',
           userId: userId,
-          person: response.person!,
-          amount: response.amount!,
-          category: response.category ?? 'debit',
+          amount: (data['amount'] as num?)?.toDouble() ?? 0,
+          type: data['type'] as String? ?? 'expense',
+          category: data['category'] as String? ?? 'Other',
+          description: data['description'] as String?,
           timestamp: DateTime.now(),
-          description: null,
         );
-
         await appProvider.addTransaction(transaction);
-        print('✅ Transaction saved successfully: ${response.person} - ₹${response.amount}');
-        
-      } else if (response.type == 'task' && response.task != null) {
-        print('✅ Creating task: title=${response.task}, dueDate=${response.dueDate}');
-        // Create and save task
+      } else if (response.action == 'ADD_TASK' && response.data != null) {
+        final data = response.data!;
         final task = Task(
-          id: '', // Will be generated by Supabase
+          id: '',
           userId: userId,
-          title: response.task!,
-          dueDate: response.dueDate,
-          completed: false,
-          reminder: response.reminderNeeded,
+          title: data['title'] as String? ?? 'Untitled Task',
+          description: data['description'] as String?,
+          dueDate: data['due_date'] != null
+              ? DateTime.tryParse(data['due_date'] as String)
+              : null,
+          priority: data['priority'] as String? ?? 'medium',
           createdAt: DateTime.now(),
         );
-
         await appProvider.addTask(task);
-        print('✅ Task saved successfully: ${response.task}');
-      } else {
-        print('💬 Normal conversation - not saving anything (type=${response.type})');
       }
     } catch (e) {
-      print('❌ Error saving categorized item: $e');
-      // Don't show error to user - the chat message was already sent successfully
+      // Silently fail — chat msg already sent
     }
   }
 
   Future<void> _clearHistory() async {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        backgroundColor: isDark ? const Color(0xFF1E293B) : Colors.white,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        backgroundColor: AppColors.surface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         title: Text(
-          'Clear Chat History',
+          'Clear Chat?',
           style: GoogleFonts.inter(
             fontWeight: FontWeight.bold,
-            color: isDark ? Colors.white : const Color(0xFF1A1D29),
+            color: AppColors.textPrimary,
           ),
         ),
         content: Text(
-          'Are you sure you want to clear all chat history?',
-          style: GoogleFonts.inter(
-            color: isDark ? Colors.white70 : const Color(0xFF6B7280),
-          ),
+          'This will delete all chat messages.',
+          style: GoogleFonts.inter(color: AppColors.textSecondary),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: Text(
-              'Cancel',
-              style: GoogleFonts.inter(color: isDark ? Colors.white60 : const Color(0xFF6B7280)),
-            ),
+            child: Text('Cancel', style: GoogleFonts.inter(color: AppColors.textSecondary)),
           ),
-          Container(
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(12),
-              gradient: const LinearGradient(
-                colors: [Color(0xFFEF4444), Color(0xFFF87171)],
-              ),
-            ),
-            child: TextButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: Text(
-                'Clear',
-                style: GoogleFonts.inter(color: Colors.white, fontWeight: FontWeight.w600),
-              ),
-            ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: Text('Clear', style: GoogleFonts.inter(color: AppColors.red, fontWeight: FontWeight.w600)),
           ),
         ],
       ),
@@ -493,6 +463,7 @@ class _ChatScreenState extends State<ChatScreen> {
       await ChatHistoryService.clearChatHistory();
       setState(() {
         _messages.clear();
+        _chatHistory.clear();
       });
     }
   }
