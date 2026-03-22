@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="assets/icon/app_icon.png" alt="HLedger Logo" width="100" height="100" style="border-radius: 22px"/>
+<img src="assets/icons/hledger_icon.png" alt="HLedger Logo" width="100" height="100" style="border-radius: 22px"/>
 
 # HLedger
 
