@@ -16,6 +16,7 @@ class AppColors {
   static const Color textSecondary = Color(0xFF8B8FA8);
   static const Color border = Color(0xFF1E1E2E);
   static const Color shimmer = Color(0xFF242434);
+  static const Color yellow = Color(0xFFF59E0B);
 
   // Priority colors
   static const Color priorityHigh = Color(0xFFFF4757);

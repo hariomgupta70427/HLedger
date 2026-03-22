@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import '../../../core/constants/app_constants.dart';
 import '../../../core/utils/input_validator.dart';
@@ -39,45 +40,49 @@ class GeminiService {
 
   static const String _systemPrompt = '''
 You are HLedger — a personal finance and task buddy.
-Talk like a close friend on WhatsApp.
-Casual, warm, short messages. Max 2 sentences in reply.
+Talk like a close friend on WhatsApp. Casual, warm, short. Max 2 sentences in reply.
 
-NEVER say:
-- "I'm here to help you track transactions"
-- "You can tell me about payments"
-- Any corporate filler phrase
+Match user's language — Hindi, English, Hinglish. Use "yaar", "bhai" in Hinglish.
 
-Match user's language — Hindi, English, or Hinglish.
-Use "yaar", "bhai" if they write in Hinglish.
+RULES:
+1. ALWAYS respond with ONLY a single JSON object. No text before or after. No markdown.
+2. NEVER wrap JSON in code blocks or backticks.
+3. NEVER add explanations outside the JSON.
 
-ALWAYS respond with valid JSON only. Nothing outside JSON.
+JSON FORMATS:
 
-When user mentions spending or receiving money:
-{"action":"ADD_TRANSACTION","data":{"amount":200,"type":"expense","category":"Food","description":"chai"},"reply":"Done ✓ ₹200 chai added."}
+Money spent/received → MUST include description:
+{"action":"ADD_TRANSACTION","data":{"amount":200,"type":"expense","category":"Food","description":"chai with friends"},"reply":"Done ✓ ₹200 chai added."}
 
-When user mentions a task or reminder:
-{"action":"ADD_TASK","data":{"title":"Call mom","due_date":"2025-03-22","priority":"medium"},"reply":"Added 📝 Call mom — tomorrow."}
+Task or reminder:
+{"action":"ADD_TASK","data":{"title":"Call mom","due_date":"2025-03-22","priority":"medium"},"reply":"Added 📝 Call mom"}
 
-When user asks about balance/spending:
+Balance/spending query:
 {"action":"GET_BALANCE","reply":"Checking your Khaata..."}
 
-Normal conversation (no action):
-{"action":"NONE","reply":"Your casual response here."}
+Normal chat (no action needed):
+{"action":"NONE","reply":"your reply here"}
 
-Categories: Food, Transport, Shopping, Bills, Entertainment, Health, Education, Work, Other
+FIELD RULES:
+- action: MUST be one of ADD_TRANSACTION, ADD_TASK, GET_BALANCE, NONE
+- description: REQUIRED for transactions — short label like "chai", "petrol", "salary"
+- type: "income" or "expense" only
+- category: Food, Transport, Shopping, Bills, Entertainment, Health, Education, Work, Other
+- priority: "low", "medium", or "high"
+- due_date: "YYYY-MM-DD" or null
+- amount: number only, no currency symbols
 
-type must be: "income" or "expense" only
-priority must be: "low", "medium", or "high" only
-due_date format: "YYYY-MM-DD" or null
-
-Parse Hindi/Hinglish naturally:
-"diye" / "paid" / "gave" / "spent" = expense
-"mile" / "received" / "got" / "earned" = income
-"kal" = tomorrow, "aaj" = today
-"karna hai" / "yaad dila" = task
+Language parsing:
+"diye"/"paid"/"gave"/"spent"/"kharch" = expense
+"mile"/"received"/"got"/"earned"/"aaye" = income
+"kal" = tomorrow, "aaj" = today, "parso" = day after tomorrow
+"karna hai"/"yaad dila"/"remind" = task
 ''';
 
   /// Send a message to AI with conversation history.
+  ///
+  /// [history] should already contain all previous messages (user + assistant).
+  /// [userMessage] is the NEW user message to send (will NOT be added to history here).
   ///
   /// Returns parsed [AIChatResponse] with action and reply.
   /// On all-model failure, returns a friendly fallback message.
@@ -87,27 +92,43 @@ Parse Hindi/Hinglish naturally:
   ) async {
     final sanitized = InputValidator.sanitizeForAI(userMessage);
 
-    // Build messages list: system + last 10 history + current
+    // Build messages: system + last 10 history messages + current user message
     final messages = <Map<String, dynamic>>[
       {'role': 'system', 'content': _systemPrompt},
       ...history.length > 10 ? history.sublist(history.length - 10) : history,
       {'role': 'user', 'content': sanitized},
     ];
 
-    // Try each model in order
-    for (final model in AppConstants.openRouterModels) {
+    // Try each model in order with delay between failures
+    for (int i = 0; i < AppConstants.openRouterModels.length; i++) {
+      final model = AppConstants.openRouterModels[i];
       try {
+        debugPrint('🤖 Trying model: $model (${i + 1}/${AppConstants.openRouterModels.length})');
         final result = await _callModel(model, messages);
-        if (result != null) return result;
-      } catch (_) {
+        if (result != null) {
+          debugPrint('✅ Got response from $model');
+          return result;
+        }
+        // Model returned null (rate limit, server error, etc.) — wait before next
+        if (i < AppConstants.openRouterModels.length - 1) {
+          final delay = Duration(seconds: 1 + i);
+          debugPrint('⏳ Waiting ${delay.inSeconds}s before trying next model...');
+          await Future.delayed(delay);
+        }
+      } catch (e) {
+        debugPrint('⚠️ Model $model failed with exception: $e');
+        if (i < AppConstants.openRouterModels.length - 1) {
+          await Future.delayed(Duration(seconds: 1 + i));
+        }
         continue;
       }
     }
 
-    // All models failed — friendly fallback
+    // All models failed — honest error message
+    debugPrint('❌ All ${AppConstants.openRouterModels.length} models failed');
     return const AIChatResponse(
       action: 'NONE',
-      reply: 'Kuch gadbad ho gayi 😅 Dobara try karo?',
+      reply: 'AI se connect nahi ho pa raha abhi 😔 Internet check karo aur retry karo.',
     );
   }
 
@@ -117,45 +138,97 @@ Parse Hindi/Hinglish naturally:
     String model,
     List<Map<String, dynamic>> messages,
   ) async {
-    final response = await http
-        .post(
-          Uri.parse(_baseUrl),
-          headers: _headers,
-          body: jsonEncode({
-            'model': model,
-            'messages': messages,
-            'temperature': 0.7,
-            'max_tokens': 250,
-          }),
-        )
-        .timeout(const Duration(seconds: 15));
-
-    if (response.statusCode != 200) return null;
-
-    final data = jsonDecode(response.body);
-    final content = data['choices']?[0]?['message']?['content'] as String?;
-    if (content == null || content.isEmpty) return null;
-
-    // Try to parse as JSON
     try {
-      String jsonText = content.trim();
+      debugPrint('📡 Calling $model...');
+      final response = await http
+          .post(
+            Uri.parse(_baseUrl),
+            headers: _headers,
+            body: jsonEncode({
+              'model': model,
+              'messages': messages,
+              'temperature': 0.7,
+              'max_tokens': 250,
+            }),
+          )
+          .timeout(const Duration(seconds: 30));
 
-      // Remove markdown code blocks if present
-      if (jsonText.startsWith('```json')) {
-        jsonText = jsonText.substring(7);
-      } else if (jsonText.startsWith('```')) {
-        jsonText = jsonText.substring(3);
-      }
-      if (jsonText.endsWith('```')) {
-        jsonText = jsonText.substring(0, jsonText.length - 3);
-      }
-      jsonText = jsonText.trim();
+      debugPrint('📨 Response from $model: status=${response.statusCode}');
 
-      final parsed = jsonDecode(jsonText) as Map<String, dynamic>;
-      return AIChatResponse.fromJson(parsed);
-    } catch (_) {
-      // If JSON parsing fails, treat the raw text as a plain reply
-      return AIChatResponse(action: 'NONE', reply: content.trim());
+      // Model not found — skip immediately
+      if (response.statusCode == 404) {
+        debugPrint('❌ Model $model not found (404) — skipping');
+        return null;
+      }
+
+      // Rate limited — try next model
+      if (response.statusCode == 429) {
+        debugPrint('⚠️ Rate limited on model $model');
+        return null;
+      }
+
+      // Server error — try next model
+      if (response.statusCode >= 500) {
+        debugPrint('⚠️ Server error ${response.statusCode} on model $model');
+        return null;
+      }
+
+      // Auth error — API key issue
+      if (response.statusCode == 401) {
+        debugPrint('❌ OpenRouter auth failed — check API key');
+        return null;
+      }
+
+      if (response.statusCode != 200) {
+        debugPrint('⚠️ Unexpected status ${response.statusCode} from $model');
+        return null;
+      }
+
+      final data = jsonDecode(response.body);
+      final content = data['choices']?[0]?['message']?['content'] as String?;
+      if (content == null || content.isEmpty) return null;
+
+      // Try to parse as JSON — handle various edge cases
+      try {
+        String jsonText = content.trim();
+
+        // Remove markdown code blocks if present
+        if (jsonText.startsWith('```json')) {
+          jsonText = jsonText.substring(7);
+        } else if (jsonText.startsWith('```')) {
+          jsonText = jsonText.substring(3);
+        }
+        if (jsonText.endsWith('```')) {
+          jsonText = jsonText.substring(0, jsonText.length - 3);
+        }
+        jsonText = jsonText.trim();
+
+        // Try to extract JSON object if there's text before/after it
+        if (!jsonText.startsWith('{')) {
+          final startIdx = jsonText.indexOf('{');
+          final endIdx = jsonText.lastIndexOf('}');
+          if (startIdx != -1 && endIdx != -1 && endIdx > startIdx) {
+            jsonText = jsonText.substring(startIdx, endIdx + 1);
+          }
+        }
+
+        final parsed = jsonDecode(jsonText) as Map<String, dynamic>;
+        
+        // Validate action field
+        final action = parsed['action'] as String? ?? 'NONE';
+        if (!['ADD_TRANSACTION', 'ADD_TASK', 'GET_BALANCE', 'NONE'].contains(action)) {
+          parsed['action'] = 'NONE';
+        }
+        
+        return AIChatResponse.fromJson(parsed);
+      } catch (e) {
+        debugPrint('⚠️ JSON parse failed for model $model: $e');
+        // If JSON parsing fails, treat the raw text as a plain reply
+        return AIChatResponse(action: 'NONE', reply: content.trim());
+      }
+    } catch (e) {
+      debugPrint('❌ Model $model error: $e');
+      return null;
     }
   }
 

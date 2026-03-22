@@ -15,23 +15,35 @@ class NotificationService {
   Future<void> initialize() async {
     if (_initialized) return;
 
-    // Initialize timezone
+    // Initialize timezone database
     tzdata.initializeTimeZones();
     
-    // Set local timezone
-    final String timeZoneName = DateTime.now().timeZoneName;
+    // Set local timezone — use IANA name directly.
+    // DateTime.now().timeZoneName returns abbreviations like 'IST' which
+    // tz.getLocation() doesn't understand. Use the IANA name instead.
     try {
-      tz.setLocalLocation(tz.getLocation(timeZoneName));
-    } catch (e) {
-      // Fallback to UTC offset calculation
+      // Try to detect from UTC offset
       final now = DateTime.now();
       final offset = now.timeZoneOffset;
-      // Try to find a timezone with this offset
-      try {
-        tz.setLocalLocation(tz.getLocation('Asia/Kolkata')); // Default for IST
-      } catch (_) {
-        print('⚠️ Could not set timezone, using UTC');
+      String ianaName;
+      
+      // Map common Indian offset to IANA name
+      if (offset.inHours == 5 && offset.inMinutes == 330) {
+        ianaName = 'Asia/Kolkata';
+      } else {
+        // Fallback: try the timeZoneName first, then default
+        try {
+          tz.setLocalLocation(tz.getLocation(now.timeZoneName));
+          ianaName = now.timeZoneName; // worked — it was already IANA
+        } catch (_) {
+          ianaName = 'Asia/Kolkata'; // hard fallback
+        }
       }
+      
+      tz.setLocalLocation(tz.getLocation(ianaName));
+      print('✅ Timezone set to: $ianaName');
+    } catch (e) {
+      print('⚠️ Timezone setup error: $e — using UTC');
     }
 
     // Android settings
@@ -111,9 +123,21 @@ class NotificationService {
       scheduledDate.second,
     );
 
-    print('📅 Scheduling notification for: $scheduledTZDate (original: $scheduledDate)');
+    // Double-check: TZDateTime must be in the future
+    final now = tz.TZDateTime.now(tz.local);
+    if (scheduledTZDate.isBefore(now) || scheduledTZDate.isAtSameMomentAs(now)) {
+      print('⚠️ TZDateTime $scheduledTZDate is not in the future (now=$now), skipping');
+      return;
+    }
 
-    // Android notification details with custom sound
+    print('📅 Scheduling notification:');
+    print('   Title: $title');
+    print('   Original DateTime: $scheduledDate');
+    print('   TZ DateTime: $scheduledTZDate');
+    print('   Now: $now');
+    print('   Delta: ${scheduledTZDate.difference(now).inMinutes} minutes from now');
+
+    // Android notification details — use default sound for reliability
     const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
       'task_reminders',
       'Task Reminders',
@@ -123,9 +147,8 @@ class NotificationService {
       showWhen: true,
       enableVibration: true,
       playSound: true,
-      sound: RawResourceAndroidNotificationSound('notification'), // Uses res/raw/notification.mp3
+      autoCancel: true,
       enableLights: true,
-      fullScreenIntent: true, // Wake up device for important notifications
     );
 
     // iOS notification details
@@ -133,7 +156,6 @@ class NotificationService {
       presentAlert: true,
       presentBadge: true,
       presentSound: true,
-      sound: 'notification.mp3', // For iOS
     );
 
     const NotificationDetails notificationDetails = NotificationDetails(
@@ -150,13 +172,24 @@ class NotificationService {
         notificationDetails,
         uiLocalNotificationDateInterpretation:
             UILocalNotificationDateInterpretation.absoluteTime,
-        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle, // EXACT timing!
+        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
         payload: 'task_$id',
       );
 
-      print('✅ Notification scheduled: "$title" for $scheduledTZDate');
+      // Verify it's in pending list
+      final pending = await _notificationsPlugin.pendingNotificationRequests();
+      final found = pending.any((p) => p.id == id);
+      print('✅ Notification scheduled: "$title" for $scheduledTZDate (verified pending: $found)');
     } catch (e) {
       print('❌ Error scheduling notification: $e');
+      // Try showing immediate notification as fallback so user knows something went wrong
+      try {
+        await showImmediateNotification(
+          id: id,
+          title: '⚠️ Reminder setup failed',
+          body: 'Could not schedule: $title. Please try again.',
+        );
+      } catch (_) {}
     }
   }
 
@@ -185,7 +218,6 @@ class NotificationService {
       importance: Importance.max,
       priority: Priority.high,
       playSound: true,
-      sound: RawResourceAndroidNotificationSound('notification'),
     );
 
     const DarwinNotificationDetails iosDetails = DarwinNotificationDetails(

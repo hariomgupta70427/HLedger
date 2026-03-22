@@ -198,9 +198,9 @@ class _ChatScreenState extends State<ChatScreen> {
           constraints: BoxConstraints(
             maxWidth: MediaQuery.of(context).size.width * 0.75,
           ),
-          decoration: BoxDecoration(
+          decoration: const BoxDecoration(
             color: AppColors.accent,
-            borderRadius: const BorderRadius.only(
+            borderRadius: BorderRadius.only(
               topLeft: Radius.circular(18),
               topRight: Radius.circular(18),
               bottomLeft: Radius.circular(18),
@@ -286,7 +286,7 @@ class _ChatScreenState extends State<ChatScreen> {
       decoration: BoxDecoration(
         color: AppColors.surface,
         borderRadius: BorderRadius.circular(28),
-        border: Border.all(color: AppColors.border),
+        // Removed the visible border — was causing the ugly border on focus
       ),
       child: Row(
         children: [
@@ -298,6 +298,8 @@ class _ChatScreenState extends State<ChatScreen> {
                 hintText: 'Type anything...',
                 hintStyle: GoogleFonts.inter(color: AppColors.textSecondary),
                 border: InputBorder.none,
+                enabledBorder: InputBorder.none,
+                focusedBorder: InputBorder.none,
                 contentPadding: EdgeInsets.zero,
                 isDense: true,
               ),
@@ -332,7 +334,7 @@ class _ChatScreenState extends State<ChatScreen> {
     final text = _messageController.text.trim();
     if (text.isEmpty) return;
 
-    // Add user message immediately
+    // Add user message to UI immediately
     final userMessage = ChatMessage(
       text: text,
       isUser: true,
@@ -347,11 +349,15 @@ class _ChatScreenState extends State<ChatScreen> {
     _messageController.clear();
     _scrollToBottom();
 
-    // Add to AI history
-    _chatHistory.add({'role': 'user', 'content': text});
+    // FIX: Don't add to _chatHistory here — sendMessage() will add userMessage itself.
+    // We pass _chatHistory as previous context, and the current text separately.
+    // This prevents the duplicate user message that was confusing the AI.
 
     try {
       final response = await _geminiService.sendMessage(_chatHistory, text);
+
+      // Now add to chat history AFTER the call succeeds
+      _chatHistory.add({'role': 'user', 'content': text});
 
       // Add AI reply
       final aiMessage = ChatMessage(
@@ -366,14 +372,15 @@ class _ChatScreenState extends State<ChatScreen> {
 
       _chatHistory.add({'role': 'assistant', 'content': response.reply});
 
-      // Handle actions
+      // Handle actions (add transaction, add task, etc.)
       await _handleAction(response);
 
-      // Save chat history
+      // Save chat history locally
       await ChatHistoryService.saveChatHistory(_messages);
     } catch (e) {
+      debugPrint('❌ Chat error: $e');
       final errorMessage = ChatMessage(
-        text: 'Oops, kuch gadbad ho gayi 😅\nDobara try karo!',
+        text: 'Thoda busy hoon abhi, 2 second mein dobara try karo 😅',
         isUser: false,
         timestamp: DateTime.now(),
       );
@@ -392,23 +399,29 @@ class _ChatScreenState extends State<ChatScreen> {
     if (!mounted) return;
 
     final userId = SupabaseService.currentUser?.id;
-    if (userId == null) return;
+    if (userId == null) {
+      debugPrint('⚠️ No user logged in, skipping action');
+      return;
+    }
 
     final appProvider = Provider.of<AppProvider>(context, listen: false);
 
     try {
       if (response.action == 'ADD_TRANSACTION' && response.data != null) {
         final data = response.data!;
+        final description = data['description'] as String? ?? data['person'] as String?;
         final transaction = Transaction(
           id: '',
           userId: userId,
           amount: (data['amount'] as num?)?.toDouble() ?? 0,
           type: data['type'] as String? ?? 'expense',
           category: data['category'] as String? ?? 'Other',
-          description: data['description'] as String?,
+          description: description,
+          person: description ?? '',  // Supabase NOT NULL — always provide
           timestamp: DateTime.now(),
         );
         await appProvider.addTransaction(transaction);
+        debugPrint('✅ Transaction added via chat: ${transaction.formattedAmount}');
       } else if (response.action == 'ADD_TASK' && response.data != null) {
         final data = response.data!;
         final task = Task(
@@ -423,9 +436,37 @@ class _ChatScreenState extends State<ChatScreen> {
           createdAt: DateTime.now(),
         );
         await appProvider.addTask(task);
+        debugPrint('✅ Task added via chat: ${task.title}');
+      } else if (response.action == 'GET_BALANCE') {
+        // Show balance info — data is already in provider
+        final income = appProvider.totalIncome;
+        final expense = appProvider.totalExpense;
+        final balance = income - expense;
+
+        final balanceMsg = ChatMessage(
+          text: '💰 Income: ₹${income.toStringAsFixed(0)}\n'
+              '💸 Expense: ₹${expense.toStringAsFixed(0)}\n'
+              '📊 Balance: ₹${balance.toStringAsFixed(0)}',
+          isUser: false,
+          timestamp: DateTime.now(),
+        );
+
+        if (mounted) {
+          setState(() => _messages.add(balanceMsg));
+          _chatHistory.add({'role': 'assistant', 'content': balanceMsg.text});
+        }
       }
     } catch (e) {
-      // Silently fail — chat msg already sent
+      debugPrint('❌ Action failed: $e');
+      // Show error in chat so user knows something went wrong
+      if (mounted) {
+        final errorMsg = ChatMessage(
+          text: 'Entry save nahi ho payi 😕 Check karo internet connection.',
+          isUser: false,
+          timestamp: DateTime.now(),
+        );
+        setState(() => _messages.add(errorMsg));
+      }
     }
   }
 

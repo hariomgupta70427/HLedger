@@ -8,41 +8,172 @@ import '../../core/theme/app_theme.dart';
 import '../../core/utils/input_validator.dart';
 import '../../models/task.dart';
 import '../../providers/app_provider.dart';
+import '../../services/notification_service.dart';
 import '../../services/supabase_service.dart';
 import '../../shared/widgets/shimmer_skeleton.dart';
 
 class TasksScreen extends StatefulWidget {
   const TasksScreen({super.key});
 
-  /// Show add task bottom sheet.
-  static void showAddTaskSheet(BuildContext context) {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: AppColors.surface,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      builder: (context) => const _AddTaskSheet(),
-    );
+  @override
+  TasksScreenState createState() => TasksScreenState();
+}
+
+class TasksScreenState extends State<TasksScreen> {
+  String _filter = 'All'; // 'All', 'Active', 'Completed'
+
+  /// Called by DashboardScreen FAB to open add task sheet.
+  void showAddTask() {
+    _showAddTaskSheet();
   }
 
   @override
-  State<TasksScreen> createState() => _TasksScreenState();
-}
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: AppColors.background,
+      body: SafeArea(
+        child: Consumer<AppProvider>(
+          builder: (context, provider, _) {
+            if (provider.isLoadingTasks) {
+              return const TaskSkeletonLoader();
+            }
 
-class _TasksScreenState extends State<TasksScreen> {
-  String _filter = 'All'; // 'All', 'Active', 'Completed'
+            final filtered = _filteredTasks(provider.tasks);
 
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      final appProvider = Provider.of<AppProvider>(context, listen: false);
-      if (appProvider.tasks.isEmpty && !appProvider.isLoading) {
-        appProvider.loadData();
-      }
-    });
+            return RefreshIndicator(
+              onRefresh: () => provider.refresh(),
+              color: AppColors.accent,
+              backgroundColor: AppColors.surface,
+              child: CustomScrollView(
+                physics: const AlwaysScrollableScrollPhysics(
+                  parent: BouncingScrollPhysics(),
+                ),
+                slivers: [
+                  // Title
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 16, 20, 4),
+                      child: Text(
+                        'Tasks',
+                        style: GoogleFonts.inter(
+                          fontSize: 28,
+                          fontWeight: FontWeight.bold,
+                          color: AppColors.textPrimary,
+                        ),
+                      ),
+                    ),
+                  ),
+                  // Filter chips
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+                      child: Row(
+                        children: ['All', 'Active', 'Completed'].map((f) {
+                          final isSelected = _filter == f;
+                          return Padding(
+                            padding: const EdgeInsets.only(right: 8),
+                            child: GestureDetector(
+                              onTap: () => setState(() => _filter = f),
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
+                                decoration: BoxDecoration(
+                                  color: isSelected ? AppColors.accent : AppColors.surface,
+                                  borderRadius: BorderRadius.circular(20),
+                                  border: Border.all(
+                                    color: isSelected ? AppColors.accent : AppColors.border,
+                                  ),
+                                ),
+                                child: Text(
+                                  f,
+                                  style: GoogleFonts.inter(
+                                    fontSize: 13,
+                                    fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
+                                    color: isSelected ? Colors.white : AppColors.textSecondary,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          );
+                        }).toList(),
+                      ),
+                    ),
+                  ),
+                  // Task list
+                  if (filtered.isEmpty)
+                    SliverFillRemaining(
+                      hasScrollBody: false,
+                      child: Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.task_alt_rounded,
+                                size: 48, color: AppColors.textSecondary.withValues(alpha: 0.5)),
+                            const SizedBox(height: 12),
+                            Text(
+                              _filter == 'All'
+                                  ? 'No tasks yet'
+                                  : 'No ${_filter.toLowerCase()} tasks',
+                              style: GoogleFonts.inter(
+                                fontSize: 16,
+                                color: AppColors.textSecondary,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    )
+                  else
+                    SliverList(
+                      delegate: SliverChildBuilderDelegate(
+                        (context, index) {
+                          final task = filtered[index];
+                          return Slidable(
+                            startActionPane: ActionPane(
+                              motion: const BehindMotion(),
+                              children: [
+                                SlidableAction(
+                                  onPressed: (_) => _toggleTask(provider, task),
+                                  backgroundColor: task.completed ? AppColors.yellow : AppColors.green,
+                                  foregroundColor: Colors.white,
+                                  icon: task.completed ? Icons.undo_rounded : Icons.check_rounded,
+                                  label: task.completed ? 'Undo' : 'Done',
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                              ],
+                            ),
+                            endActionPane: ActionPane(
+                              motion: const BehindMotion(),
+                              children: [
+                                SlidableAction(
+                                  onPressed: (_) => _deleteTask(provider, task),
+                                  backgroundColor: AppColors.red,
+                                  foregroundColor: Colors.white,
+                                  icon: Icons.delete_rounded,
+                                  label: 'Delete',
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                              ],
+                            ),
+                            child: _TaskCard(
+                              task: task,
+                              onToggle: () => _toggleTask(provider, task),
+                              onSetReminder: () => _setReminder(provider, task),
+                            ).animate()
+                                .fadeIn(duration: 300.ms, delay: (50 * index).ms)
+                                .slideX(begin: 0.1, duration: 300.ms),
+                          );
+                        },
+                        childCount: filtered.length,
+                      ),
+                    ),
+                  const SliverToBoxAdapter(child: SizedBox(height: 80)),
+                ],
+              ),
+            );
+          },
+        ),
+      ),
+    );
   }
 
   List<Task> _filteredTasks(List<Task> tasks) {
@@ -56,91 +187,345 @@ class _TasksScreenState extends State<TasksScreen> {
     }
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.background,
-      body: Consumer<AppProvider>(
-        builder: (context, provider, _) {
-          if (provider.isLoading && provider.tasks.isEmpty) {
-            return const SingleChildScrollView(
-              child: TaskSkeletonLoader(),
-            );
-          }
+  Future<void> _toggleTask(AppProvider provider, Task task) async {
+    try {
+      await provider.updateTask(task.copyWith(completed: !task.completed));
+    } catch (e) {
+      debugPrint('❌ Toggle task error: $e');
+    }
+  }
 
-          final filtered = _filteredTasks(provider.tasks);
+  Future<void> _deleteTask(AppProvider provider, Task task) async {
+    try {
+      // Cancel any scheduled notification
+      await NotificationService().cancelNotification(task.id.hashCode);
+      await provider.deleteTask(task.id);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Task deleted', style: GoogleFonts.inter()),
+            backgroundColor: AppColors.surface2,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to delete: $e', style: GoogleFonts.inter()),
+            backgroundColor: AppColors.red,
+          ),
+        );
+      }
+    }
+  }
 
-          return RefreshIndicator(
-            color: AppColors.accent,
-            backgroundColor: AppColors.surface,
-            onRefresh: () => provider.refresh(),
-            child: CustomScrollView(
-              slivers: [
-                // Filter chips
-                SliverToBoxAdapter(child: _buildFilterChips()),
-                // Tasks list or empty state
-                if (filtered.isEmpty)
-                  SliverFillRemaining(
-                    hasScrollBody: false,
-                    child: _buildEmptyState(),
-                  )
-                else
-                  SliverList(
-                    delegate: SliverChildBuilderDelegate(
-                      (context, index) {
-                        final task = filtered[index];
-                        return Slidable(
-                          key: ValueKey(task.id),
-                          startActionPane: ActionPane(
-                            motion: const DrawerMotion(),
-                            children: [
-                              SlidableAction(
-                                onPressed: (_) => _toggleComplete(task),
-                                backgroundColor: AppColors.green,
-                                foregroundColor: Colors.white,
-                                icon: task.completed
-                                    ? Icons.undo_rounded
-                                    : Icons.check_rounded,
-                                label: task.completed ? 'Undo' : 'Done',
-                                borderRadius: BorderRadius.circular(12),
+  Future<void> _setReminder(AppProvider provider, Task task) async {
+    // Pick date
+    final date = await showDatePicker(
+      context: context,
+      initialDate: task.dueDate ?? DateTime.now().add(const Duration(days: 1)),
+      firstDate: DateTime.now(),
+      lastDate: DateTime.now().add(const Duration(days: 365)),
+      builder: _themedPicker,
+    );
+    if (date == null || !mounted) return;
+
+    // Pick time
+    final time = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.now(),
+      builder: _themedPicker,
+    );
+    if (time == null || !mounted) return;
+
+    final reminderDateTime = DateTime(date.year, date.month, date.day, time.hour, time.minute);
+
+    // Schedule notification
+    await NotificationService().scheduleTaskReminder(
+      id: task.id.hashCode,
+      title: '📝 Task Reminder',
+      body: task.title,
+      scheduledDate: reminderDateTime,
+    );
+
+    // Update task with reminder info
+    final updated = task.copyWith(
+      reminder: true,
+      reminderTime: reminderDateTime,
+    );
+    await provider.updateTask(updated);
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Reminder set for ${DateFormat('d MMM, h:mm a').format(reminderDateTime)} ⏰',
+            style: GoogleFonts.inter(),
+          ),
+          backgroundColor: AppColors.surface2,
+        ),
+      );
+    }
+  }
+
+  void _showAddTaskSheet() {
+    final titleCtrl = TextEditingController();
+    final descCtrl = TextEditingController();
+    DateTime? dueDate;
+    TimeOfDay? reminderTime;
+    String priority = 'medium';
+    bool setReminder = false;
+    final formKey = GlobalKey<FormState>();
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setSheetState) {
+          return Container(
+            padding: EdgeInsets.only(
+              bottom: MediaQuery.of(context).viewInsets.bottom,
+            ),
+            decoration: BoxDecoration(
+              color: AppColors.surface,
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: Form(
+                key: formKey,
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Center(
+                        child: Container(
+                          width: 40,
+                          height: 4,
+                          decoration: BoxDecoration(
+                            color: AppColors.border,
+                            borderRadius: BorderRadius.circular(2),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        'New Task',
+                        style: GoogleFonts.inter(
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                          color: AppColors.textPrimary,
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+                      // Title
+                      TextFormField(
+                        controller: titleCtrl,
+                        validator: (v) => InputValidator.validateText(v),
+                        style: GoogleFonts.inter(color: AppColors.textPrimary, fontSize: 16),
+                        decoration: InputDecoration(
+                          hintText: 'Task title',
+                          hintStyle: GoogleFonts.inter(color: AppColors.textSecondary),
+                          filled: true,
+                          fillColor: AppColors.background,
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(16),
+                            borderSide: BorderSide.none,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      // Description
+                      TextFormField(
+                        controller: descCtrl,
+                        style: GoogleFonts.inter(color: AppColors.textPrimary),
+                        maxLines: 2,
+                        decoration: InputDecoration(
+                          hintText: 'Description (optional)',
+                          hintStyle: GoogleFonts.inter(color: AppColors.textSecondary),
+                          filled: true,
+                          fillColor: AppColors.background,
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(16),
+                            borderSide: BorderSide.none,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      // Priority
+                      Row(
+                        children: [
+                          Text(
+                            'Priority: ',
+                            style: GoogleFonts.inter(color: AppColors.textSecondary, fontSize: 13),
+                          ),
+                          const SizedBox(width: 8),
+                          ...['low', 'medium', 'high'].map((p) {
+                            final isSelected = priority == p;
+                            final color = p == 'high'
+                                ? AppColors.red
+                                : p == 'medium'
+                                    ? AppColors.yellow
+                                    : AppColors.green;
+                            return Padding(
+                              padding: const EdgeInsets.only(right: 8),
+                              child: GestureDetector(
+                                onTap: () => setSheetState(() => priority = p),
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                                  decoration: BoxDecoration(
+                                    color: isSelected ? color.withValues(alpha: 0.2) : AppColors.background,
+                                    borderRadius: BorderRadius.circular(14),
+                                    border: Border.all(
+                                      color: isSelected ? color : AppColors.border,
+                                    ),
+                                  ),
+                                  child: Text(
+                                    p[0].toUpperCase() + p.substring(1),
+                                    style: GoogleFonts.inter(
+                                      fontSize: 12,
+                                      fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
+                                      color: isSelected ? color : AppColors.textSecondary,
+                                    ),
+                                  ),
+                                ),
                               ),
-                            ],
-                          ),
-                          endActionPane: ActionPane(
-                            motion: const DrawerMotion(),
-                            children: [
-                              SlidableAction(
-                                onPressed: (_) => _deleteTask(task.id),
-                                backgroundColor: AppColors.red,
-                                foregroundColor: Colors.white,
-                                icon: Icons.delete_rounded,
-                                label: 'Delete',
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                            ],
-                          ),
-                          child: _TaskCard(
-                            task: task,
-                            onToggle: () => _toggleComplete(task),
-                          ),
-                        )
-                            .animate()
-                            .fadeIn(
-                              duration: 300.ms,
-                              delay: (index * 50).ms,
-                            )
-                            .slideY(
-                              begin: 0.3,
-                              duration: 300.ms,
-                              delay: (index * 50).ms,
-                              curve: Curves.easeOutCubic,
                             );
-                      },
-                      childCount: filtered.length,
-                    ),
+                          }),
+                        ],
+                      ),
+                      const SizedBox(height: 14),
+                      // Due date
+                      GestureDetector(
+                        onTap: () async {
+                          final picked = await showDatePicker(
+                            context: context,
+                            initialDate: DateTime.now().add(const Duration(days: 1)),
+                            firstDate: DateTime.now(),
+                            lastDate: DateTime.now().add(const Duration(days: 365)),
+                            builder: _themedPicker,
+                          );
+                          if (picked != null) {
+                            setSheetState(() => dueDate = picked);
+                          }
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                          decoration: BoxDecoration(
+                            color: AppColors.background,
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(Icons.calendar_today_rounded,
+                                  size: 18, color: AppColors.textSecondary),
+                              const SizedBox(width: 10),
+                              Text(
+                                dueDate != null
+                                    ? DateFormat('d MMM yyyy').format(dueDate!)
+                                    : 'Set due date',
+                                style: GoogleFonts.inter(
+                                  color: dueDate != null ? AppColors.textPrimary : AppColors.textSecondary,
+                                  fontSize: 14,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      // Reminder toggle
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: AppColors.background,
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(Icons.notifications_active_rounded,
+                                size: 18,
+                                color: setReminder ? AppColors.accent : AppColors.textSecondary),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Text(
+                                setReminder && reminderTime != null
+                                    ? 'Reminder at ${reminderTime!.format(context)}'
+                                    : 'Set Reminder',
+                                style: GoogleFonts.inter(
+                                  color: setReminder ? AppColors.textPrimary : AppColors.textSecondary,
+                                  fontSize: 14,
+                                ),
+                              ),
+                            ),
+                            Switch(
+                              value: setReminder,
+                              activeTrackColor: AppColors.accent.withValues(alpha: 0.4),
+                              activeThumbColor: AppColors.accent,
+                              onChanged: (val) async {
+                                if (val) {
+                                  final time = await showTimePicker(
+                                    context: context,
+                                    initialTime: TimeOfDay.now(),
+                                    builder: _themedPicker,
+                                  );
+                                  if (time != null) {
+                                    setSheetState(() {
+                                      setReminder = true;
+                                      reminderTime = time;
+                                    });
+                                  }
+                                } else {
+                                  setSheetState(() {
+                                    setReminder = false;
+                                    reminderTime = null;
+                                  });
+                                }
+                              },
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+                      // Save
+                      SizedBox(
+                        width: double.infinity,
+                        height: 52,
+                        child: ElevatedButton(
+                          onPressed: () => _saveTask(
+                            context,
+                            formKey: formKey,
+                            titleCtrl: titleCtrl,
+                            descCtrl: descCtrl,
+                            dueDate: dueDate,
+                            priority: priority,
+                            setReminder: setReminder,
+                            reminderTime: reminderTime,
+                          ),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.accent,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                          ),
+                          child: Text(
+                            'Save Task',
+                            style: GoogleFonts.inter(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                    ],
                   ),
-                const SliverToBoxAdapter(child: SizedBox(height: 100)),
-              ],
+                ),
+              ),
             ),
           );
         },
@@ -148,158 +533,127 @@ class _TasksScreenState extends State<TasksScreen> {
     );
   }
 
-  Widget _buildFilterChips() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-      child: Row(
-        children: ['All', 'Active', 'Completed'].map((label) {
-          final selected = _filter == label;
-          return Padding(
-            padding: const EdgeInsets.only(right: 8),
-            child: GestureDetector(
-              onTap: () => setState(() => _filter = label),
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                decoration: BoxDecoration(
-                  color: selected ? AppColors.accent : AppColors.surface,
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(
-                    color: selected ? AppColors.accent : AppColors.border,
-                  ),
-                ),
-                child: Text(
-                  label,
-                  style: GoogleFonts.inter(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: selected ? Colors.white : AppColors.textSecondary,
-                  ),
-                ),
-              ),
-            ),
-          );
-        }).toList(),
-      ),
-    );
-  }
+  Future<void> _saveTask(
+    BuildContext sheetContext, {
+    required GlobalKey<FormState> formKey,
+    required TextEditingController titleCtrl,
+    required TextEditingController descCtrl,
+    required DateTime? dueDate,
+    required String priority,
+    required bool setReminder,
+    required TimeOfDay? reminderTime,
+  }) async {
+    if (!formKey.currentState!.validate()) return;
 
-  Widget _buildEmptyState() {
-    String title;
-    String subtitle;
-
-    switch (_filter) {
-      case 'Active':
-        title = 'All caught up 🎉';
-        subtitle = 'No active tasks right now.';
-        break;
-      case 'Completed':
-        title = 'Nothing completed yet';
-        subtitle = 'Complete some tasks to see them here.';
-        break;
-      default:
-        title = 'No tasks yet';
-        subtitle = 'Add your first task via Chat or tap +';
+    final userId = SupabaseService.currentUser?.id;
+    if (userId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Please login first', style: GoogleFonts.inter()),
+          backgroundColor: AppColors.red,
+        ),
+      );
+      return;
     }
 
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(
-            Icons.check_circle_outline_rounded,
-            size: 64,
-            color: AppColors.textSecondary.withValues(alpha: 0.3),
-          ),
-          const SizedBox(height: 16),
-          Text(
-            title,
-            style: GoogleFonts.inter(
-              fontSize: 18,
-              fontWeight: FontWeight.w600,
-              color: AppColors.textPrimary,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            subtitle,
-            style: GoogleFonts.inter(
-              fontSize: 14,
-              color: AppColors.textSecondary,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+    // Build reminder datetime
+    DateTime? reminderDateTime;
+    if (setReminder && reminderTime != null) {
+      final dateForReminder = dueDate ?? DateTime.now().add(const Duration(days: 1));
+      reminderDateTime = DateTime(
+        dateForReminder.year,
+        dateForReminder.month,
+        dateForReminder.day,
+        reminderTime.hour,
+        reminderTime.minute,
+      );
+    }
 
-  Future<void> _toggleComplete(Task task) async {
-    final updated = task.copyWith(completed: !task.completed);
+    final task = Task(
+      id: '',
+      userId: userId,
+      title: titleCtrl.text.trim(),
+      description: descCtrl.text.trim().isEmpty ? null : descCtrl.text.trim(),
+      dueDate: dueDate,
+      priority: priority,
+      reminder: setReminder,
+      reminderTime: reminderDateTime,
+      createdAt: DateTime.now(),
+    );
+
+    Navigator.pop(sheetContext);
+
     try {
-      await Provider.of<AppProvider>(context, listen: false).updateTask(updated);
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to update task.', style: GoogleFonts.inter()),
-            backgroundColor: AppColors.red,
-            behavior: SnackBarBehavior.floating,
-          ),
+      final provider = Provider.of<AppProvider>(context, listen: false);
+      final savedTask = await provider.addTask(task);
+
+      // Schedule notification if reminder is set
+      if (setReminder && reminderDateTime != null) {
+        await NotificationService().scheduleTaskReminder(
+          id: savedTask.id.hashCode,
+          title: '📝 Task Reminder',
+          body: savedTask.title,
+          scheduledDate: reminderDateTime,
         );
       }
-    }
-  }
 
-  Future<void> _deleteTask(String id) async {
-    try {
-      await Provider.of<AppProvider>(context, listen: false).deleteTask(id);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Task deleted', style: GoogleFonts.inter()),
+            content: Text(
+              setReminder ? 'Task added with reminder ⏰' : 'Task added ✅',
+              style: GoogleFonts.inter(),
+            ),
             backgroundColor: AppColors.surface2,
-            behavior: SnackBarBehavior.floating,
           ),
         );
       }
     } catch (e) {
+      debugPrint('❌ Save task error: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Failed to delete. Tap to retry.', style: GoogleFonts.inter()),
+            content: Text('Failed to save: $e', style: GoogleFonts.inter()),
             backgroundColor: AppColors.red,
-            behavior: SnackBarBehavior.floating,
-            action: SnackBarAction(
-              label: 'Retry',
-              textColor: Colors.white,
-              onPressed: () => _deleteTask(id),
-            ),
           ),
         );
       }
     }
   }
 
-
+  Widget _themedPicker(BuildContext context, Widget? child) {
+    return Theme(
+      data: ThemeData.dark().copyWith(
+        colorScheme: ColorScheme.dark(
+          primary: AppColors.accent,
+          surface: AppColors.surface,
+        ),
+      ),
+      child: child!,
+    );
+  }
 }
 
-// ── Task Card ──
-
+/// Premium task card with priority indicator and reminder info.
 class _TaskCard extends StatelessWidget {
   final Task task;
   final VoidCallback onToggle;
+  final VoidCallback onSetReminder;
 
-  const _TaskCard({required this.task, required this.onToggle});
+  const _TaskCard({
+    required this.task,
+    required this.onToggle,
+    required this.onSetReminder,
+  });
 
   Color get _priorityColor {
     switch (task.priority) {
       case 'high':
-        return AppColors.priorityHigh;
+        return AppColors.red;
       case 'medium':
-        return AppColors.priorityMedium;
-      case 'low':
-        return AppColors.priorityLow;
+        return AppColors.yellow;
       default:
-        return AppColors.priorityLow;
+        return AppColors.green;
     }
   }
 
@@ -318,12 +672,13 @@ class _TaskCard extends StatelessWidget {
           // Checkbox
           GestureDetector(
             onTap: onToggle,
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 300),
+            child: Container(
               width: 24,
               height: 24,
               decoration: BoxDecoration(
-                color: task.completed ? AppColors.green : Colors.transparent,
+                color: task.completed
+                    ? AppColors.green.withValues(alpha: 0.2)
+                    : Colors.transparent,
                 borderRadius: BorderRadius.circular(6),
                 border: Border.all(
                   color: task.completed ? AppColors.green : AppColors.border,
@@ -331,12 +686,12 @@ class _TaskCard extends StatelessWidget {
                 ),
               ),
               child: task.completed
-                  ? const Icon(Icons.check, color: Colors.white, size: 16)
+                  ? const Icon(Icons.check_rounded, size: 16, color: AppColors.green)
                   : null,
             ),
           ),
           const SizedBox(width: 12),
-          // Title & date
+          // Content
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -349,40 +704,71 @@ class _TaskCard extends StatelessWidget {
                     color: task.completed
                         ? AppColors.textSecondary
                         : AppColors.textPrimary,
-                    decoration: task.completed
-                        ? TextDecoration.lineThrough
-                        : null,
+                    decoration: task.completed ? TextDecoration.lineThrough : null,
                   ),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
                 ),
-                if (task.dueDate != null) ...[
-                  const SizedBox(height: 4),
-                  Text(
-                    DateFormat('d MMM, yyyy').format(task.dueDate!),
-                    style: GoogleFonts.inter(
-                      fontSize: 12,
-                      color: task.isOverdue
-                          ? AppColors.red
-                          : AppColors.textSecondary,
-                      fontWeight: task.isOverdue
-                          ? FontWeight.w600
-                          : FontWeight.normal,
-                    ),
-                  ),
-                ],
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    if (task.dueDate != null) ...[
+                      Icon(
+                        Icons.calendar_today_rounded,
+                        size: 12,
+                        color: task.isOverdue ? AppColors.red : AppColors.textSecondary,
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        DateFormat('d MMM').format(task.dueDate!),
+                        style: GoogleFonts.inter(
+                          fontSize: 11,
+                          color: task.isOverdue ? AppColors.red : AppColors.textSecondary,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                    ],
+                    if (task.reminder) ...[
+                      Icon(
+                        Icons.notifications_active_rounded,
+                        size: 12,
+                        color: AppColors.accent,
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        task.reminderTime != null
+                            ? DateFormat('h:mm a').format(task.reminderTime!)
+                            : 'Reminder',
+                        style: GoogleFonts.inter(
+                          fontSize: 11,
+                          color: AppColors.accent,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
               ],
             ),
           ),
+          // Reminder button
+          if (!task.completed)
+            IconButton(
+              icon: Icon(
+                task.reminder ? Icons.notifications_active : Icons.notifications_none_rounded,
+                size: 20,
+                color: task.reminder ? AppColors.accent : AppColors.textSecondary,
+              ),
+              onPressed: onSetReminder,
+              tooltip: 'Set reminder',
+              visualDensity: VisualDensity.compact,
+            ),
           // Priority badge
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
             decoration: BoxDecoration(
-              color: _priorityColor.withValues(alpha: 0.12),
+              color: _priorityColor.withValues(alpha: 0.15),
               borderRadius: BorderRadius.circular(12),
             ),
             child: Text(
-              task.priority,
+              task.priority[0].toUpperCase() + task.priority.substring(1),
               style: GoogleFonts.inter(
                 fontSize: 11,
                 fontWeight: FontWeight.w600,
@@ -393,284 +779,5 @@ class _TaskCard extends StatelessWidget {
         ],
       ),
     );
-  }
-}
-
-// ── Add Task Sheet ──
-
-class _AddTaskSheet extends StatefulWidget {
-  const _AddTaskSheet();
-
-  @override
-  State<_AddTaskSheet> createState() => _AddTaskSheetState();
-}
-
-class _AddTaskSheetState extends State<_AddTaskSheet> {
-  final _formKey = GlobalKey<FormState>();
-  final _titleController = TextEditingController();
-  final _descriptionController = TextEditingController();
-  String _priority = 'medium';
-  DateTime? _dueDate;
-  bool _saving = false;
-
-  @override
-  void dispose() {
-    _titleController.dispose();
-    _descriptionController.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: EdgeInsets.only(
-        left: 24,
-        right: 24,
-        top: 24,
-        bottom: MediaQuery.of(context).viewInsets.bottom + 24,
-      ),
-      child: Form(
-        key: _formKey,
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Handle
-              Center(
-                child: Container(
-                  width: 40,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: AppColors.border,
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 20),
-              Text(
-                'Add Task',
-                style: GoogleFonts.inter(
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
-                  color: AppColors.textPrimary,
-                ),
-              ),
-              const SizedBox(height: 24),
-
-              // Title
-              TextFormField(
-                controller: _titleController,
-                validator: (v) => InputValidator.validateText(v, maxLength: 200),
-                style: GoogleFonts.inter(color: AppColors.textPrimary),
-                decoration: InputDecoration(
-                  hintText: 'What needs to be done?',
-                  hintStyle: GoogleFonts.inter(color: AppColors.textSecondary),
-                ),
-              ),
-              const SizedBox(height: 16),
-
-              // Description
-              TextFormField(
-                controller: _descriptionController,
-                style: GoogleFonts.inter(color: AppColors.textPrimary),
-                maxLines: 2,
-                decoration: InputDecoration(
-                  hintText: 'Add details (optional)',
-                  hintStyle: GoogleFonts.inter(color: AppColors.textSecondary),
-                ),
-              ),
-              const SizedBox(height: 16),
-
-              // Priority
-              Text(
-                'Priority',
-                style: GoogleFonts.inter(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w500,
-                  color: AppColors.textSecondary,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Row(
-                children: ['low', 'medium', 'high'].map((p) {
-                  final selected = _priority == p;
-                  final color = p == 'high'
-                      ? AppColors.priorityHigh
-                      : p == 'medium'
-                          ? AppColors.priorityMedium
-                          : AppColors.priorityLow;
-                  return Padding(
-                    padding: const EdgeInsets.only(right: 8),
-                    child: GestureDetector(
-                      onTap: () => setState(() => _priority = p),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 8,
-                        ),
-                        decoration: BoxDecoration(
-                          color: selected
-                              ? color.withValues(alpha: 0.15)
-                              : AppColors.surface2,
-                          borderRadius: BorderRadius.circular(20),
-                          border: Border.all(
-                            color: selected ? color : AppColors.border,
-                          ),
-                        ),
-                        child: Text(
-                          p[0].toUpperCase() + p.substring(1),
-                          style: GoogleFonts.inter(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                            color: selected ? color : AppColors.textSecondary,
-                          ),
-                        ),
-                      ),
-                    ),
-                  );
-                }).toList(),
-              ),
-              const SizedBox(height: 16),
-
-              // Due date
-              GestureDetector(
-                onTap: _pickDueDate,
-                child: Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: AppColors.surface2,
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: AppColors.border),
-                  ),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.calendar_today_rounded,
-                          color: AppColors.textSecondary, size: 18),
-                      const SizedBox(width: 12),
-                      Text(
-                        _dueDate != null
-                            ? DateFormat('d MMM, yyyy').format(_dueDate!)
-                            : 'Set due date (optional)',
-                        style: GoogleFonts.inter(
-                          fontSize: 14,
-                          color: _dueDate != null
-                              ? AppColors.textPrimary
-                              : AppColors.textSecondary,
-                        ),
-                      ),
-                      const Spacer(),
-                      if (_dueDate != null)
-                        GestureDetector(
-                          onTap: () => setState(() => _dueDate = null),
-                          child: const Icon(Icons.close_rounded,
-                              color: AppColors.textSecondary, size: 18),
-                        ),
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(height: 24),
-
-              // Save
-              SizedBox(
-                width: double.infinity,
-                height: 52,
-                child: ElevatedButton(
-                  onPressed: _saving ? null : _save,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.accent,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                  ),
-                  child: _saving
-                      ? const SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(
-                            color: Colors.white,
-                            strokeWidth: 2,
-                          ),
-                        )
-                      : Text(
-                          'Save',
-                          style: GoogleFonts.inter(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                            color: Colors.white,
-                          ),
-                        ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Future<void> _pickDueDate() async {
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: _dueDate ?? DateTime.now(),
-      firstDate: DateTime.now(),
-      lastDate: DateTime.now().add(const Duration(days: 365)),
-      builder: (context, child) {
-        return Theme(
-          data: Theme.of(context).copyWith(
-            colorScheme: const ColorScheme.dark(
-              primary: AppColors.accent,
-              surface: AppColors.surface,
-              onSurface: AppColors.textPrimary,
-            ),
-          ),
-          child: child!,
-        );
-      },
-    );
-    if (picked != null) {
-      setState(() => _dueDate = picked);
-    }
-  }
-
-  Future<void> _save() async {
-    if (!_formKey.currentState!.validate()) return;
-
-    setState(() => _saving = true);
-
-    final userId = SupabaseService.currentUser?.id;
-    if (userId == null) {
-      if (mounted) Navigator.pop(context);
-      return;
-    }
-
-    final task = Task(
-      id: '',
-      userId: userId,
-      title: _titleController.text.trim(),
-      description: _descriptionController.text.trim().isEmpty
-          ? null
-          : _descriptionController.text.trim(),
-      dueDate: _dueDate,
-      priority: _priority,
-      createdAt: DateTime.now(),
-    );
-
-    try {
-      await Provider.of<AppProvider>(context, listen: false).addTask(task);
-      if (mounted) Navigator.pop(context);
-    } catch (e) {
-      setState(() => _saving = false);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to save. Try again.', style: GoogleFonts.inter()),
-            backgroundColor: AppColors.red,
-          ),
-        );
-      }
-    }
   }
 }

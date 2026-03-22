@@ -6,13 +6,16 @@ import '../services/supabase_service.dart';
 class AppProvider extends ChangeNotifier {
   List<Transaction> _transactions = [];
   List<Task> _tasks = [];
-  bool _isLoading = false;
+  bool _isLoadingTransactions = false;
+  bool _isLoadingTasks = false;
   DateTime? _lastLoadTime;
   static const Duration _cacheValidDuration = Duration(minutes: 5);
 
   List<Transaction> get transactions => _transactions;
   List<Task> get tasks => _tasks;
-  bool get isLoading => _isLoading;
+  bool get isLoading => _isLoadingTransactions || _isLoadingTasks;
+  bool get isLoadingTransactions => _isLoadingTransactions;
+  bool get isLoadingTasks => _isLoadingTasks;
   bool get isAuthenticated => SupabaseService.isAuthenticated;
 
   double get totalIncome =>
@@ -35,18 +38,23 @@ class AppProvider extends ChangeNotifier {
 
     if (!forceRefresh && _isCacheValid && _transactions.isNotEmpty) return;
 
-    _isLoading = true;
+    _isLoadingTransactions = true;
+    _isLoadingTasks = true;
     notifyListeners();
 
     try {
       _transactions = await SupabaseService.getTransactions();
+      _isLoadingTransactions = false;
+      notifyListeners();
+
       _tasks = await SupabaseService.getTasks();
       _lastLoadTime = DateTime.now();
     } catch (e) {
       debugPrint('Error loading data: $e');
     }
 
-    _isLoading = false;
+    _isLoadingTransactions = false;
+    _isLoadingTasks = false;
     notifyListeners();
   }
 
@@ -62,19 +70,8 @@ class AppProvider extends ChangeNotifier {
     }
   }
 
-  Future<void> addTask(Task task) async {
-    try {
-      final newTask = await SupabaseService.addTask(task);
-      _tasks.insert(0, newTask);
-      _lastLoadTime = DateTime.now();
-      notifyListeners();
-    } catch (e) {
-      debugPrint('Error adding task: $e');
-      rethrow;
-    }
-  }
-
-  Future<Task?> addTaskAndReturn(Task task) async {
+  /// Adds a task and returns the saved task (with server-generated id).
+  Future<Task> addTask(Task task) async {
     try {
       final newTask = await SupabaseService.addTask(task);
       _tasks.insert(0, newTask);

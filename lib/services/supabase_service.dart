@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../core/constants/app_constants.dart';
 import '../core/utils/retry_helper.dart';
@@ -5,7 +6,7 @@ import '../models/transaction.dart';
 import '../models/task.dart';
 
 class SupabaseService {
-  static final SupabaseClient _client = Supabase.instance.client;
+  static SupabaseClient get _client => Supabase.instance.client;
 
   static Future<void> initialize() async {
     await Supabase.initialize(
@@ -18,6 +19,17 @@ class SupabaseService {
 
   static User? get currentUser => _client.auth.currentUser;
   static bool get isAuthenticated => currentUser != null;
+
+  /// Get display name for current user (email prefix or metadata name).
+  static String get displayName {
+    final user = currentUser;
+    if (user == null) return 'User';
+    final meta = user.userMetadata;
+    if (meta != null && meta['full_name'] != null) return meta['full_name'];
+    if (meta != null && meta['name'] != null) return meta['name'];
+    final email = user.email ?? '';
+    return email.split('@').first;
+  }
 
   static Future<AuthResponse> signIn(String email, String password) async {
     try {
@@ -94,37 +106,64 @@ class SupabaseService {
   }
 
   static Future<Transaction> addTransaction(Transaction transaction) async {
-    return RetryHelper.run(() async {
-      final response = await _client
-          .from(AppConstants.transactionsTable)
-          .insert(transaction.toJson())
-          .select()
-          .single();
+    final user = currentUser;
+    if (user == null) throw Exception('Not logged in');
 
-      return Transaction.fromJson(response);
-    });
+    final data = transaction.toJson()..['user_id'] = user.id;
+    data.remove('id');
+
+    try {
+      return await RetryHelper.run(() async {
+        final response = await _client
+            .from(AppConstants.transactionsTable)
+            .insert(data)
+            .select()
+            .single();
+
+        return Transaction.fromJson(response);
+      });
+    } on PostgrestException catch (e) {
+      debugPrint('❌ Supabase addTransaction error: ${e.message} | code: ${e.code}');
+      throw Exception('Save failed: ${e.message}');
+    }
   }
 
   static Future<Transaction> updateTransaction(Transaction transaction) async {
-    return RetryHelper.run(() async {
-      final response = await _client
-          .from(AppConstants.transactionsTable)
-          .update(transaction.toJson())
-          .eq('id', transaction.id)
-          .select()
-          .single();
+    final user = currentUser;
+    if (user == null) throw Exception('Not logged in');
 
-      return Transaction.fromJson(response);
-    });
+    final data = transaction.toJson()..['user_id'] = user.id;
+    data.remove('id');
+
+    try {
+      return await RetryHelper.run(() async {
+        final response = await _client
+            .from(AppConstants.transactionsTable)
+            .update(data)
+            .eq('id', transaction.id)
+            .select()
+            .single();
+
+        return Transaction.fromJson(response);
+      });
+    } on PostgrestException catch (e) {
+      debugPrint('❌ Supabase updateTransaction error: ${e.message} | code: ${e.code}');
+      throw Exception('Update failed: ${e.message}');
+    }
   }
 
   static Future<void> deleteTransaction(String id) async {
-    return RetryHelper.run(() async {
-      await _client
-          .from(AppConstants.transactionsTable)
-          .delete()
-          .eq('id', id);
-    });
+    try {
+      return await RetryHelper.run(() async {
+        await _client
+            .from(AppConstants.transactionsTable)
+            .delete()
+            .eq('id', id);
+      });
+    } on PostgrestException catch (e) {
+      debugPrint('❌ Supabase deleteTransaction error: ${e.message}');
+      throw Exception('Delete failed: ${e.message}');
+    }
   }
 
   /// Real-time stream of user's transactions, ordered by created_at desc.
@@ -158,37 +197,64 @@ class SupabaseService {
   }
 
   static Future<Task> addTask(Task task) async {
-    return RetryHelper.run(() async {
-      final response = await _client
-          .from(AppConstants.tasksTable)
-          .insert(task.toJson())
-          .select()
-          .single();
+    final user = currentUser;
+    if (user == null) throw Exception('Not logged in');
 
-      return Task.fromJson(response);
-    });
+    final data = task.toJson()..['user_id'] = user.id;
+    data.remove('id');
+
+    try {
+      return await RetryHelper.run(() async {
+        final response = await _client
+            .from(AppConstants.tasksTable)
+            .insert(data)
+            .select()
+            .single();
+
+        return Task.fromJson(response);
+      });
+    } on PostgrestException catch (e) {
+      debugPrint('❌ Supabase addTask error: ${e.message} | code: ${e.code}');
+      throw Exception('Save failed: ${e.message}');
+    }
   }
 
   static Future<Task> updateTask(Task task) async {
-    return RetryHelper.run(() async {
-      final response = await _client
-          .from(AppConstants.tasksTable)
-          .update(task.toJson())
-          .eq('id', task.id)
-          .select()
-          .single();
+    final user = currentUser;
+    if (user == null) throw Exception('Not logged in');
 
-      return Task.fromJson(response);
-    });
+    final data = task.toJson()..['user_id'] = user.id;
+    data.remove('id');
+
+    try {
+      return await RetryHelper.run(() async {
+        final response = await _client
+            .from(AppConstants.tasksTable)
+            .update(data)
+            .eq('id', task.id)
+            .select()
+            .single();
+
+        return Task.fromJson(response);
+      });
+    } on PostgrestException catch (e) {
+      debugPrint('❌ Supabase updateTask error: ${e.message} | code: ${e.code}');
+      throw Exception('Update failed: ${e.message}');
+    }
   }
 
   static Future<void> deleteTask(String id) async {
-    return RetryHelper.run(() async {
-      await _client
-          .from(AppConstants.tasksTable)
-          .delete()
-          .eq('id', id);
-    });
+    try {
+      return await RetryHelper.run(() async {
+        await _client
+            .from(AppConstants.tasksTable)
+            .delete()
+            .eq('id', id);
+      });
+    } on PostgrestException catch (e) {
+      debugPrint('❌ Supabase deleteTask error: ${e.message}');
+      throw Exception('Delete failed: ${e.message}');
+    }
   }
 
   /// Real-time stream of user's tasks, ordered by created_at desc.

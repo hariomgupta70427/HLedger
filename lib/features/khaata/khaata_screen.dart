@@ -15,123 +15,348 @@ import '../../shared/widgets/transaction_card.dart';
 class KhaataScreen extends StatefulWidget {
   const KhaataScreen({super.key});
 
-  /// Show add transaction bottom sheet.
-  static void showAddTransactionSheet(BuildContext context) {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: AppColors.surface,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      builder: (context) => const _AddTransactionSheet(),
-    );
-  }
-
   @override
-  State<KhaataScreen> createState() => _KhaataScreenState();
+  KhaataScreenState createState() => KhaataScreenState();
 }
 
-class _KhaataScreenState extends State<KhaataScreen> {
-  @override
-  void initState() {
-    super.initState();
-    // Trigger initial load if provider is empty
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      final appProvider = Provider.of<AppProvider>(context, listen: false);
-      if (appProvider.transactions.isEmpty && !appProvider.isLoading) {
-        appProvider.loadData();
-      }
-    });
+class KhaataScreenState extends State<KhaataScreen> {
+  final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
+  final TextEditingController _amountController = TextEditingController();
+  final TextEditingController _descriptionController = TextEditingController();
+  String _selectedType = 'expense';
+  String _selectedCategory = 'Food';
+
+  static const _categories = [
+    'Food', 'Transport', 'Shopping', 'Bills',
+    'Entertainment', 'Health', 'Education', 'Work', 'Other',
+  ];
+
+  /// Called by DashboardScreen FAB to open add transaction sheet.
+  void showAddTransaction() {
+    _showAddTransactionSheet();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.background,
-      body: Consumer<AppProvider>(
-        builder: (context, provider, _) {
-          if (provider.isLoading && provider.transactions.isEmpty) {
-            return const SingleChildScrollView(
-              child: KhaataSkeletonLoader(),
-            );
-          }
+      body: SafeArea(
+        child: Consumer<AppProvider>(
+          builder: (context, provider, _) {
+            if (provider.isLoadingTransactions) {
+              return const KhaataSkeletonLoader();
+            }
 
-          return RefreshIndicator(
-            color: AppColors.accent,
-            backgroundColor: AppColors.surface,
-            onRefresh: () => provider.refresh(),
-            child: CustomScrollView(
-              slivers: [
-                // Balance summary
-                SliverToBoxAdapter(
-                  child: BalanceSummary(
-                    totalIncome: provider.totalIncome,
-                    totalExpense: provider.totalExpense,
-                  ),
+            return RefreshIndicator(
+              onRefresh: () => provider.refresh(),
+              color: AppColors.accent,
+              backgroundColor: AppColors.surface,
+              child: CustomScrollView(
+                physics: const AlwaysScrollableScrollPhysics(
+                  parent: BouncingScrollPhysics(),
                 ),
-                // Section header
-                SliverToBoxAdapter(
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-                    child: Text(
-                      'Recent Transactions',
-                      style: GoogleFonts.inter(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.textPrimary,
+                slivers: [
+                  // Title
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 16, 20, 4),
+                      child: Text(
+                        'Khaata',
+                        style: GoogleFonts.inter(
+                          fontSize: 28,
+                          fontWeight: FontWeight.bold,
+                          color: AppColors.textPrimary,
+                        ),
                       ),
                     ),
                   ),
-                ),
-                // Transactions list or empty state
-                if (provider.transactions.isEmpty)
-                  SliverFillRemaining(
-                    hasScrollBody: false,
-                    child: _buildEmptyState(),
-                  )
-                else
-                  SliverList(
-                    delegate: SliverChildBuilderDelegate(
-                      (context, index) {
-                        final transaction = provider.transactions[index];
-                        return Slidable(
-                          key: ValueKey(transaction.id),
-                          endActionPane: ActionPane(
-                            motion: const DrawerMotion(),
-                            children: [
-                              SlidableAction(
-                                onPressed: (_) => _deleteTransaction(transaction.id),
-                                backgroundColor: AppColors.red,
-                                foregroundColor: Colors.white,
-                                icon: Icons.delete_rounded,
-                                label: 'Delete',
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                            ],
-                          ),
-                          child: TransactionCard(transaction: transaction),
-                        )
-                            .animate()
-                            .fadeIn(
-                              duration: 300.ms,
-                              delay: (index * 50).ms,
-                            )
-                            .slideY(
-                              begin: 0.3,
-                              duration: 300.ms,
-                              delay: (index * 50).ms,
-                              curve: Curves.easeOutCubic,
-                            );
-                      },
-                      childCount: provider.transactions.length,
+                  // Balance summary
+                  SliverToBoxAdapter(
+                    child: BalanceSummary(
+                      totalIncome: provider.totalIncome,
+                      totalExpense: provider.totalExpense,
                     ),
                   ),
-                // Bottom padding
-                const SliverToBoxAdapter(
-                  child: SizedBox(height: 100),
+                  // Section header
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 12, 20, 4),
+                      child: Text(
+                        'Recent Transactions',
+                        style: GoogleFonts.inter(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
+                    ),
+                  ),
+                  // Transaction list
+                  if (provider.transactions.isEmpty)
+                    SliverFillRemaining(
+                      hasScrollBody: false,
+                      child: Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.receipt_long_rounded,
+                                size: 48, color: AppColors.textSecondary.withValues(alpha: 0.5)),
+                            const SizedBox(height: 12),
+                            Text(
+                              'No transactions yet',
+                              style: GoogleFonts.inter(
+                                fontSize: 16,
+                                color: AppColors.textSecondary,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              'Tap + to add your first entry',
+                              style: GoogleFonts.inter(
+                                fontSize: 13,
+                                color: AppColors.textSecondary.withValues(alpha: 0.7),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    )
+                  else
+                    SliverList(
+                      delegate: SliverChildBuilderDelegate(
+                        (context, index) {
+                          final t = provider.transactions[index];
+                          return Slidable(
+                            endActionPane: ActionPane(
+                              motion: const BehindMotion(),
+                              children: [
+                                SlidableAction(
+                                  onPressed: (_) => _deleteTransaction(provider, t),
+                                  backgroundColor: AppColors.red,
+                                  foregroundColor: Colors.white,
+                                  icon: Icons.delete_rounded,
+                                  label: 'Delete',
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                              ],
+                            ),
+                            child: TransactionCard(transaction: t)
+                                .animate()
+                                .fadeIn(duration: 300.ms, delay: (50 * index).ms)
+                                .slideX(begin: 0.1, duration: 300.ms),
+                          );
+                        },
+                        childCount: provider.transactions.length,
+                      ),
+                    ),
+                  const SliverToBoxAdapter(child: SizedBox(height: 80)),
+                ],
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  Future<void> _deleteTransaction(AppProvider provider, Transaction t) async {
+    try {
+      await provider.deleteTransaction(t.id);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Transaction deleted', style: GoogleFonts.inter()),
+            backgroundColor: AppColors.surface2,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to delete: $e', style: GoogleFonts.inter()),
+            backgroundColor: AppColors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  void _showAddTransactionSheet() {
+    _amountController.clear();
+    _descriptionController.clear();
+    _selectedType = 'expense';
+    _selectedCategory = 'Food';
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setSheetState) {
+          return Container(
+            padding: EdgeInsets.only(
+              bottom: MediaQuery.of(context).viewInsets.bottom,
+            ),
+            decoration: BoxDecoration(
+              color: AppColors.surface,
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: Form(
+                key: _formKey,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 40,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: AppColors.border,
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      'New Transaction',
+                      style: GoogleFonts.inter(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    // Type toggle
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _TypeChip(
+                            label: 'Expense',
+                            icon: Icons.arrow_upward_rounded,
+                            isSelected: _selectedType == 'expense',
+                            color: AppColors.red,
+                            onTap: () => setSheetState(() => _selectedType = 'expense'),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: _TypeChip(
+                            label: 'Income',
+                            icon: Icons.arrow_downward_rounded,
+                            isSelected: _selectedType == 'income',
+                            color: AppColors.green,
+                            onTap: () => setSheetState(() => _selectedType = 'income'),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    // Amount
+                    TextFormField(
+                      controller: _amountController,
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      validator: InputValidator.validateAmount,
+                      style: GoogleFonts.jetBrainsMono(
+                        fontSize: 24,
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.textPrimary,
+                      ),
+                      decoration: InputDecoration(
+                        prefixText: '₹ ',
+                        prefixStyle: GoogleFonts.jetBrainsMono(
+                          fontSize: 24,
+                          fontWeight: FontWeight.bold,
+                          color: AppColors.accent,
+                        ),
+                        hintText: '0',
+                        hintStyle: GoogleFonts.jetBrainsMono(
+                          color: AppColors.textSecondary.withValues(alpha: 0.5),
+                        ),
+                        filled: true,
+                        fillColor: AppColors.background,
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(16),
+                          borderSide: BorderSide.none,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    // Description
+                    TextFormField(
+                      controller: _descriptionController,
+                      style: GoogleFonts.inter(color: AppColors.textPrimary),
+                      decoration: InputDecoration(
+                        hintText: 'Description (e.g., chai with friends)',
+                        hintStyle: GoogleFonts.inter(color: AppColors.textSecondary),
+                        filled: true,
+                        fillColor: AppColors.background,
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(16),
+                          borderSide: BorderSide.none,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    // Category
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: _categories.map((cat) {
+                        final isSelected = _selectedCategory == cat;
+                        return GestureDetector(
+                          onTap: () => setSheetState(() => _selectedCategory = cat),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                            decoration: BoxDecoration(
+                              color: isSelected ? AppColors.accent : AppColors.background,
+                              borderRadius: BorderRadius.circular(20),
+                              border: Border.all(
+                                color: isSelected ? AppColors.accent : AppColors.border,
+                              ),
+                            ),
+                            child: Text(
+                              cat,
+                              style: GoogleFonts.inter(
+                                fontSize: 13,
+                                fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
+                                color: isSelected ? Colors.white : AppColors.textSecondary,
+                              ),
+                            ),
+                          ),
+                        );
+                      }).toList(),
+                    ),
+                    const SizedBox(height: 20),
+                    // Save button
+                    SizedBox(
+                      width: double.infinity,
+                      height: 52,
+                      child: ElevatedButton(
+                        onPressed: () => _saveTransaction(context),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.accent,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                        ),
+                        child: Text(
+                          'Save Transaction',
+                          style: GoogleFonts.inter(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                  ],
                 ),
-              ],
+              ),
             ),
           );
         },
@@ -139,90 +364,60 @@ class _KhaataScreenState extends State<KhaataScreen> {
     );
   }
 
-  Widget _buildEmptyState() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(
-            Icons.receipt_long_rounded,
-            size: 64,
-            color: AppColors.textSecondary.withValues(alpha: 0.3),
-          ),
-          const SizedBox(height: 16),
-          Text(
-            'No entries yet',
-            style: GoogleFonts.inter(
-              fontSize: 18,
-              fontWeight: FontWeight.w600,
-              color: AppColors.textPrimary,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Add your first entry via Chat or tap +',
-            style: GoogleFonts.inter(
-              fontSize: 14,
-              color: AppColors.textSecondary,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+  Future<void> _saveTransaction(BuildContext sheetContext) async {
+    if (!_formKey.currentState!.validate()) return;
 
-  Future<void> _deleteTransaction(String id) async {
+    final userId = SupabaseService.currentUser?.id;
+    if (userId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Please login first', style: GoogleFonts.inter()),
+          backgroundColor: AppColors.red,
+        ),
+      );
+      return;
+    }
+
+    final desc = _descriptionController.text.trim().isEmpty
+        ? null
+        : _descriptionController.text.trim();
+
+    final transaction = Transaction(
+      id: '',
+      userId: userId,
+      amount: double.parse(_amountController.text.trim()),
+      type: _selectedType,
+      category: _selectedCategory,
+      description: desc,
+      person: desc ?? '',  // Supabase NOT NULL — always provide
+      timestamp: DateTime.now(),
+    );
+
+    Navigator.pop(sheetContext);
+
     try {
-      await Provider.of<AppProvider>(context, listen: false).deleteTransaction(id);
+      final provider = Provider.of<AppProvider>(context, listen: false);
+      await provider.addTransaction(transaction);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Transaction deleted', style: GoogleFonts.inter()),
+            content: Text('Transaction added ✅', style: GoogleFonts.inter()),
             backgroundColor: AppColors.surface2,
-            behavior: SnackBarBehavior.floating,
           ),
         );
       }
     } catch (e) {
+      debugPrint('❌ Save transaction error: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Failed to delete. Tap to retry.', style: GoogleFonts.inter()),
+            content: Text('Failed to save: $e', style: GoogleFonts.inter()),
             backgroundColor: AppColors.red,
-            behavior: SnackBarBehavior.floating,
-            action: SnackBarAction(
-              label: 'Retry',
-              textColor: Colors.white,
-              onPressed: () => _deleteTransaction(id),
-            ),
           ),
         );
       }
     }
   }
-
-
-}
-
-class _AddTransactionSheet extends StatefulWidget {
-  const _AddTransactionSheet();
-
-  @override
-  State<_AddTransactionSheet> createState() => _AddTransactionSheetState();
-}
-
-class _AddTransactionSheetState extends State<_AddTransactionSheet> {
-  final _formKey = GlobalKey<FormState>();
-  final _amountController = TextEditingController();
-  final _descriptionController = TextEditingController();
-  String _type = 'expense';
-  String _category = 'Other';
-  bool _saving = false;
-
-  static const _categories = [
-    'Food', 'Transport', 'Shopping', 'Bills',
-    'Entertainment', 'Health', 'Education', 'Work', 'Other',
-  ];
 
   @override
   void dispose() {
@@ -230,228 +425,19 @@ class _AddTransactionSheetState extends State<_AddTransactionSheet> {
     _descriptionController.dispose();
     super.dispose();
   }
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: EdgeInsets.only(
-        left: 24,
-        right: 24,
-        top: 24,
-        bottom: MediaQuery.of(context).viewInsets.bottom + 24,
-      ),
-      child: Form(
-        key: _formKey,
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Handle bar
-              Center(
-                child: Container(
-                  width: 40,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: AppColors.border,
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 20),
-              Text(
-                'Add Transaction',
-                style: GoogleFonts.inter(
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
-                  color: AppColors.textPrimary,
-                ),
-              ),
-              const SizedBox(height: 24),
-
-              // Type toggle
-              Row(
-                children: [
-                  _TypeChip(
-                    label: 'Expense',
-                    selected: _type == 'expense',
-                    color: AppColors.red,
-                    onTap: () => setState(() => _type = 'expense'),
-                  ),
-                  const SizedBox(width: 12),
-                  _TypeChip(
-                    label: 'Income',
-                    selected: _type == 'income',
-                    color: AppColors.green,
-                    onTap: () => setState(() => _type = 'income'),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 20),
-
-              // Amount
-              TextFormField(
-                controller: _amountController,
-                keyboardType: TextInputType.number,
-                validator: InputValidator.validateAmount,
-                style: GoogleFonts.jetBrainsMono(
-                  fontSize: 24,
-                  fontWeight: FontWeight.w600,
-                  color: AppColors.textPrimary,
-                ),
-                decoration: InputDecoration(
-                  prefixText: '₹ ',
-                  prefixStyle: GoogleFonts.jetBrainsMono(
-                    fontSize: 24,
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.textSecondary,
-                  ),
-                  hintText: '0',
-                  hintStyle: GoogleFonts.jetBrainsMono(
-                    fontSize: 24,
-                    color: AppColors.textSecondary.withValues(alpha: 0.3),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16),
-
-              // Description
-              TextFormField(
-                controller: _descriptionController,
-                validator: (v) => InputValidator.validateText(v, maxLength: 200),
-                style: GoogleFonts.inter(color: AppColors.textPrimary),
-                decoration: InputDecoration(
-                  hintText: 'What was it for?',
-                  hintStyle: GoogleFonts.inter(color: AppColors.textSecondary),
-                ),
-              ),
-              const SizedBox(height: 16),
-
-              // Category
-              Text(
-                'Category',
-                style: GoogleFonts.inter(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w500,
-                  color: AppColors.textSecondary,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: _categories.map((cat) {
-                  final selected = _category == cat;
-                  return GestureDetector(
-                    onTap: () => setState(() => _category = cat),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                      decoration: BoxDecoration(
-                        color: selected ? AppColors.accent : AppColors.surface2,
-                        borderRadius: BorderRadius.circular(20),
-                        border: Border.all(
-                          color: selected ? AppColors.accent : AppColors.border,
-                        ),
-                      ),
-                      child: Text(
-                        cat,
-                        style: GoogleFonts.inter(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w500,
-                          color: selected ? Colors.white : AppColors.textSecondary,
-                        ),
-                      ),
-                    ),
-                  );
-                }).toList(),
-              ),
-              const SizedBox(height: 24),
-
-              // Save button
-              SizedBox(
-                width: double.infinity,
-                height: 52,
-                child: ElevatedButton(
-                  onPressed: _saving ? null : _save,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.accent,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                  ),
-                  child: _saving
-                      ? const SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(
-                            color: Colors.white,
-                            strokeWidth: 2,
-                          ),
-                        )
-                      : Text(
-                          'Save',
-                          style: GoogleFonts.inter(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                            color: Colors.white,
-                          ),
-                        ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Future<void> _save() async {
-    if (!_formKey.currentState!.validate()) return;
-
-    setState(() => _saving = true);
-
-    final userId = SupabaseService.currentUser?.id;
-    if (userId == null) {
-      if (mounted) Navigator.pop(context);
-      return;
-    }
-
-    final transaction = Transaction(
-      id: '',
-      userId: userId,
-      amount: double.parse(_amountController.text.trim()),
-      type: _type,
-      category: _category,
-      description: _descriptionController.text.trim(),
-      timestamp: DateTime.now(),
-    );
-
-    try {
-      await Provider.of<AppProvider>(context, listen: false).addTransaction(transaction);
-      if (mounted) Navigator.pop(context);
-    } catch (e) {
-      setState(() => _saving = false);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to save. Try again.', style: GoogleFonts.inter()),
-            backgroundColor: AppColors.red,
-          ),
-        );
-      }
-    }
-  }
 }
 
 class _TypeChip extends StatelessWidget {
   final String label;
-  final bool selected;
+  final IconData icon;
+  final bool isSelected;
   final Color color;
   final VoidCallback onTap;
 
   const _TypeChip({
     required this.label,
-    required this.selected,
+    required this.icon,
+    required this.isSelected,
     required this.color,
     required this.onTap,
   });
@@ -461,21 +447,28 @@ class _TypeChip extends StatelessWidget {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+        padding: const EdgeInsets.symmetric(vertical: 12),
         decoration: BoxDecoration(
-          color: selected ? color.withValues(alpha: 0.15) : AppColors.surface2,
-          borderRadius: BorderRadius.circular(20),
+          color: isSelected ? color.withValues(alpha: 0.15) : AppColors.background,
+          borderRadius: BorderRadius.circular(14),
           border: Border.all(
-            color: selected ? color : AppColors.border,
+            color: isSelected ? color : AppColors.border,
           ),
         ),
-        child: Text(
-          label,
-          style: GoogleFonts.inter(
-            fontSize: 14,
-            fontWeight: FontWeight.w600,
-            color: selected ? color : AppColors.textSecondary,
-          ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, color: isSelected ? color : AppColors.textSecondary, size: 18),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: GoogleFonts.inter(
+                fontSize: 14,
+                fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
+                color: isSelected ? color : AppColors.textSecondary,
+              ),
+            ),
+          ],
         ),
       ),
     );
