@@ -41,7 +41,21 @@ Built for people who want to track their money without thinking too hard about t
 
 ## Screenshots
 
-> Add screenshots here — Dashboard / Khaata / Chat / Tasks
+## Screenshots
+
+<p align="center">
+  <img src="assets/images/ss1.jpg" width="200" />
+  <img src="assets/images/ss2.jpg" width="200" />
+  <img src="assets/images/ss3.jpg" width="200" />
+  <img src="assets/images/ss4.jpg" width="200" />
+</p>
+
+<p align="center">
+  <b>Dashboard</b> &nbsp;&nbsp;&nbsp;&nbsp;
+  <b>Khaata</b> &nbsp;&nbsp;&nbsp;&nbsp;
+  <b>Chat</b> &nbsp;&nbsp;&nbsp;&nbsp;
+  <b>Tasks</b>
+</p>
 
 ---
 
