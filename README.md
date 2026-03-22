@@ -1,282 +1,284 @@
-# HLedger - Smart Expense Tracker
+<div align="center">
 
-*"Your Chat. Your Tasks. Your Transactions. Sorted."*
+<img src="assets/icons/hledger_icon.png" alt="HLedger Logo" width="100" height="100" style="border-radius: 22px"/>
 
-<p align="center">
-  <img src="assets/icons/hledger_icon.png" alt="HLedger Logo" width="120"/>
-</p>
+# HLedger
 
-## 📱 Overview
+**Track money and tasks — just by talking.**
 
-HLedger is a Flutter-based AI-powered chat application that combines a **To-Do Manager** and a **Khaata Book** (personal finance tracker) into one unified, chat-style interface. Users can type naturally in Hinglish or Hindi-English mixed format, and the app automatically detects the intent and stores data accordingly.
+[![Flutter](https://img.shields.io/badge/Flutter-3.x-54C5F8?logo=flutter&logoColor=white)](https://flutter.dev)
+[![Supabase](https://img.shields.io/badge/Supabase-Backend-3ECF8E?logo=supabase&logoColor=white)](https://supabase.com)
+[![OpenRouter](https://img.shields.io/badge/AI-OpenRouter-6C63FF)](https://openrouter.ai)
+[![License](https://img.shields.io/badge/License-MIT-00D68F)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/hariomgupta70427/HLedger?color=FF4757)](https://github.com/hariomgupta70427/HLedger/releases)
 
----
+[Download APK](https://github.com/hariomgupta70427/HLedger/releases/latest) · [Report Bug](https://github.com/hariomgupta70427/HLedger/issues) · [Request Feature](https://github.com/hariomgupta70427/HLedger/discussions)
 
-## ✨ Features
-
-| Feature | Description |
-|---------|-------------|
-| 💬 **Chat Interface** | Natural language input for transactions and tasks |
-| 💰 **Khaata Book** | Track credits, debits, and balance with detailed history |
-| ✅ **To-Do Management** | Task tracking with reminders and notifications |
-| 🤖 **AI Categorization** | Powered by OpenRouter API (Gemma 2 9B) |
-| 🔔 **Local Notifications** | Task reminders with exact alarm scheduling |
-| � **Dark Mode** | System-aware theme switching |
-| 🔐 **Google Sign-In** | Secure OAuth authentication via Supabase |
-| 📱 **Session Persistence** | Stay logged in across app restarts |
+</div>
 
 ---
 
-## 🛠️ Tech Stack
+## The idea
 
-- **Framework**: Flutter 3.8+
-- **Backend**: Supabase (Auth + Database)
-- **AI**: OpenRouter API (google/gemma-2-9b-it:free)
-- **Notifications**: flutter_local_notifications
-- **State Management**: Provider
-- **UI**: Material 3 with custom theming
+Most finance apps make you fill forms. HLedger doesn't.
 
----
+You just talk to it — _"spent 200 on lunch"_, _"remind me to pay rent tomorrow"_ — and it figures out the rest. Entries go straight to your Khaata. Tasks show up with reminders. No dropdowns, no manual categorization, no friction.
 
-## 📋 Prerequisites
-
-- Flutter SDK (>=3.8.0)
-- Android Studio / VS Code
-- Android device or emulator (minSdk 21+)
-- Accounts on:
-  - [Supabase](https://supabase.com)
-  - [OpenRouter](https://openrouter.ai) (for AI features)
+Built for people who want to track their money without thinking too hard about tracking their money.
 
 ---
 
-## 🚀 Setup Instructions
+## What's inside
 
-### Step 1: Clone the Repository
+```
+📊  Dashboard    — spending charts, weekly trends, quick stats
+📒  Khaata       — income/expense ledger, real-time sync
+💬  Chat         — AI assistant that actually does things
+✅  Tasks        — to-dos with reminders, even when app is closed
+```
 
+---
+
+## Screenshots
+
+> Add screenshots here — Dashboard / Khaata / Chat / Tasks
+
+---
+
+## Features
+
+### Chat that works like WhatsApp
+Type naturally in Hindi, English, or Hinglish. The AI understands what you mean and acts on it — no confirmation dialogs, no extra steps.
+
+```
+You:       spent 350 on groceries
+HLedger:   Done ✓ ₹350 groceries added.
+
+You:       remind me to pay electricity bill friday
+HLedger:   Added 📝 Electricity bill — Friday.
+```
+
+### Khaata (Expense Ledger)
+- Income and expense tracking with category icons
+- Balance summary — this month or all time
+- Real-time updates when Chat adds an entry
+- Swipe left to delete
+- Pull to refresh
+
+### Tasks
+- Add via Chat or manually
+- Set due dates and reminders (fires even when app is closed)
+- Priority: Low / Medium / High
+- Filter: All / Active / Completed
+- Swipe right to complete, swipe left to delete
+- Overdue tasks show in red
+
+### Dashboard
+- Good morning greeting (time-aware)
+- Weekly spending bar chart
+- Category breakdown
+- Quick stats: transactions, tasks done, pending, net balance
+
+### Navigation
+- Instagram-style swipe between tabs
+- Floating pill bottom nav
+
+---
+
+## Tech Stack
+
+| Layer | What |
+|---|---|
+| Framework | Flutter 3.x (Dart) |
+| Backend | Supabase (PostgreSQL + Auth + Realtime) |
+| AI | OpenRouter — free tier, Llama 4 + Mistral |
+| State | Provider |
+| Notifications | flutter_local_notifications |
+| Animations | flutter_animate |
+| Local storage | SharedPreferences (chat history) |
+
+---
+
+## Getting Started
+
+### Prerequisites
+
+- Flutter 3.x
+- Dart 3.x
+- A Supabase project
+- An OpenRouter API key (free at [openrouter.ai](https://openrouter.ai))
+
+### Setup
+
+**1. Clone the repo**
 ```bash
 git clone https://github.com/hariomgupta70427/HLedger.git
 cd HLedger
 ```
 
-### Step 2: Configure API Credentials
-
-1. **Copy the example configuration file:**
-   ```bash
-   cp lib/core/constants/app_constants.dart.example lib/core/constants/app_constants.dart
-   ```
-
-2. **Fill in your credentials in `app_constants.dart`:**
-
-   ```dart
-   // Supabase Configuration
-   static const String supabaseUrl = 'https://your-project.supabase.co';
-   static const String supabaseAnonKey = 'your-anon-key-here';
-
-   // OpenRouter API (for AI Chat)
-   static const String openRouterApiKey = 'sk-or-v1-your-key-here';
-   static const String openRouterModel = 'google/gemma-2-9b-it:free';
-   ```
-
-### Step 3: Supabase Setup
-
-#### 3.1 Create Database Tables
-
-Run these SQL commands in Supabase SQL Editor:
-
-```sql
--- Transactions table
-CREATE TABLE transactions (
-  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
-  person TEXT NOT NULL,
-  amount DECIMAL NOT NULL,
-  category TEXT NOT NULL CHECK (category IN ('credit', 'debit')),
-  timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-  description TEXT
-);
-
--- Tasks table
-CREATE TABLE tasks (
-  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
-  title TEXT NOT NULL,
-  due_date TIMESTAMP WITH TIME ZONE,
-  completed BOOLEAN DEFAULT FALSE,
-  reminder BOOLEAN DEFAULT FALSE,
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
-
--- Enable Row Level Security
-ALTER TABLE transactions ENABLE ROW LEVEL SECURITY;
-ALTER TABLE tasks ENABLE ROW LEVEL SECURITY;
-
--- RLS Policies (users can only access their own data)
-CREATE POLICY "Users can manage own transactions" ON transactions
-  FOR ALL USING (auth.uid() = user_id);
-
-CREATE POLICY "Users can manage own tasks" ON tasks
-  FOR ALL USING (auth.uid() = user_id);
-```
-
-#### 3.2 Configure Google OAuth
-
-1. Go to **Supabase Dashboard** → **Authentication** → **Providers**
-2. Enable **Google** provider
-3. Add your Google OAuth credentials (Client ID & Secret)
-
-#### 3.3 Configure Redirect URLs
-
-1. Go to **Authentication** → **URL Configuration**
-2. Add this **Redirect URL**:
-   ```
-   io.supabase.hledger://login-callback
-   ```
-   > ⚠️ This is CRITICAL for Google Sign-In to work correctly!
-
-### Step 4: Install Dependencies
-
+**2. Install dependencies**
 ```bash
 flutter pub get
 ```
 
-### Step 5: Run the App
+**3. Set up environment**
+```bash
+cp .env.example .env
+```
+
+Fill in your values:
+```env
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_ANON_KEY=your-anon-key
+OPENROUTER_KEY=sk-or-your-key
+```
+
+**4. Set up Supabase**
+
+Run the SQL in `SUPABASE_SETUP.md` in your Supabase SQL Editor.
+This creates the tables and Row Level Security policies.
+
+**5. Run**
+```bash
+flutter run --dart-define=SUPABASE_URL=xxx \
+            --dart-define=SUPABASE_ANON_KEY=xxx \
+            --dart-define=OPENROUTER_KEY=xxx
+```
+
+### Building a release APK
 
 ```bash
-# Development
-flutter run
+flutter build apk --release \
+  --dart-define=SUPABASE_URL=your_url \
+  --dart-define=SUPABASE_ANON_KEY=your_key \
+  --dart-define=OPENROUTER_KEY=your_key
+```
 
-# Specific device
-flutter run -d <device_id>
+Output: `build/app/outputs/flutter-apk/app-release.apk`
+
+---
+
+## Project Structure
+
+```
+lib/
+├── main.dart                  # Entry point, auth routing
+├── screens/
+│   ├── dashboard_screen.dart  # Home tab with analytics
+│   ├── khaata_screen.dart     # Expense ledger
+│   ├── chat_screen.dart       # AI chat interface
+│   ├── tasks_screen.dart      # To-do list
+│   └── profile_screen.dart    # Settings, logout
+├── services/
+│   ├── supabase_service.dart  # All database operations
+│   ├── gemini_service.dart    # OpenRouter AI calls
+│   ├── notification_service.dart
+│   └── supabase_keep_alive.dart
+├── models/
+│   ├── transaction.dart
+│   └── task.dart
+├── widgets/
+│   ├── transaction_card.dart
+│   ├── shimmer_skeleton.dart
+│   ├── typing_indicator.dart
+│   └── balance_summary.dart
+├── utils/
+│   ├── app_theme.dart
+│   ├── app_constants.dart
+│   ├── retry_helper.dart
+│   └── input_validator.dart
+└── providers/
+    └── app_provider.dart
 ```
 
 ---
 
-## 📦 Building for Production
+## Database Schema
 
-### Generate Release Keystore (First Time Only)
+Two tables in Supabase:
+
+**transactions**
+| Column | Type | Notes |
+|---|---|---|
+| id | uuid | Primary key, auto-generated |
+| user_id | uuid | References auth.users |
+| amount | numeric | |
+| type | text | `income` or `expense` |
+| category | text | Food, Transport, etc. |
+| description | text | |
+| created_at | timestamptz | Default: now() |
+
+**tasks**
+| Column | Type | Notes |
+|---|---|---|
+| id | uuid | Primary key, auto-generated |
+| user_id | uuid | References auth.users |
+| title | text | |
+| description | text | Nullable |
+| due_date | date | Nullable |
+| reminder_date_time | timestamptz | Nullable |
+| priority | text | `low`, `medium`, `high` |
+| is_completed | boolean | Default: false |
+| created_at | timestamptz | Default: now() |
+
+Row Level Security is enabled on both tables — users can only access their own data.
+
+---
+
+## Supabase Free Tier
+
+Built to stay comfortably within Supabase's free limits, even with 30–50 users:
+
+- Chat history is stored locally (SharedPreferences) — no database reads/writes
+- AI calls go through OpenRouter, not Supabase
+- Transactions and tasks are cached locally for 5 minutes
+- Keep-alive ping runs every 10 minutes (prevents project pausing)
+- Only CRUD operations hit Supabase
+
+---
+
+## Security
+
+- API keys are baked at build time via `--dart-define` — not in source code, not in `.env` committed to git
+- Row Level Security enforced at the database level
+- All user input is sanitized before being sent to the AI
+- HTTPS only — cleartext traffic is blocked in the Android network config
+- Release APK has code minification and obfuscation enabled
+
+---
+
+## Roadmap
+
+- [ ] iOS support
+- [ ] Export to CSV / PDF
+- [ ] Recurring transactions
+- [ ] UPI transaction detection (auto-import)
+- [ ] Budget limits with alerts
+- [ ] Multi-currency support
+- [ ] Widget for home screen balance
+
+---
+
+## Contributing
+
+Issues and PRs are welcome. If you're planning something big, open a discussion first so we're on the same page.
 
 ```bash
-keytool -genkey -v -keystore android/app/upload-keystore.jks \
-  -storetype JKS -keyalg RSA -keysize 2048 -validity 10000 \
-  -alias upload
-```
-
-### Configure Signing
-
-Create `android/key.properties`:
-```properties
-storePassword=your_store_password
-keyPassword=your_key_password
-keyAlias=upload
-storeFile=upload-keystore.jks
-```
-
-### Build Release APK
-
-```bash
-# Clean build with split APKs (recommended)
-flutter clean
-flutter pub get
-flutter build apk --release --split-per-abi
-
-# Output locations:
-# - build/app/outputs/flutter-apk/app-arm64-v8a-release.apk (~31 MB)
-# - build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk (~28 MB)
-```
-
-### Install on Device
-
-```bash
-adb install -r build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+git checkout -b feature/your-feature
+git commit -m "feat: describe your change"
+git push origin feature/your-feature
 ```
 
 ---
 
-## 🔧 Configuration Reference
+## License
 
-| File | Purpose |
-|------|---------|
-| `lib/core/constants/app_constants.dart` | API keys and configuration (gitignored) |
-| `android/key.properties` | Release signing credentials (gitignored) |
-| `android/app/upload-keystore.jks` | Release keystore file (gitignored) |
+MIT — do what you want, just don't remove the attribution.
 
 ---
 
-## 📱 Usage Examples
+<div align="center">
 
-### Adding Transactions (via Chat)
-```
-"1500 Kaif ko diye" → Adds ₹1500 debit to Kaif
-"2000 mile salary se" → Adds ₹2000 credit from salary
-"500 chai ke liye" → Adds ₹500 miscellaneous debit
-```
+Built by [Hariom Gupta](https://hariomgupta.vercel.app) · New Delhi, India
 
-### Adding Tasks
-```
-"CN ka assignment kal tak karna hai" → Task with tomorrow's deadline
-"Meeting 3 baje" → Task for 3 PM today
-"Reminder: electricity bill Friday ko" → Task with Friday reminder
-```
-
----
-
-## 📁 Project Structure
-
-```
-HLedger/
-├── android/
-│   ├── app/
-│   │   ├── src/main/kotlin/com/hariverse/hledger/
-│   │   │   └── MainActivity.kt
-│   │   ├── build.gradle.kts
-│   │   └── upload-keystore.jks (gitignored)
-│   └── key.properties (gitignored)
-├── lib/
-│   ├── core/
-│   │   ├── constants/
-│   │   │   ├── app_constants.dart (gitignored)
-│   │   │   └── app_constants.dart.example
-│   │   └── theme/
-│   ├── data/services/
-│   │   └── gemini/gemini_service.dart (OpenRouter integration)
-│   ├── features/
-│   │   └── transactions/chat_screen.dart
-│   ├── models/
-│   ├── providers/
-│   ├── services/
-│   │   ├── supabase_service.dart
-│   │   └── notification_service.dart
-│   └── main.dart
-├── assets/
-│   └── icons/hledger_icon.png
-├── pubspec.yaml
-└── README.md
-```
-
----
-
-## 🔐 Security Notes
-
-> ⚠️ **NEVER commit credentials to Git!**
-
-The following files are already in `.gitignore`:
-- `lib/core/constants/app_constants.dart`
-- `android/key.properties`
-- `android/app/upload-keystore.jks`
-- `google-services.json`
-
----
-
-## 📄 License
-
-This project is licensed under the MIT License.
-
----
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+</div>
