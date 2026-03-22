@@ -1,6 +1,15 @@
+import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/timezone.dart' as tz;
 import 'package:timezone/data/latest.dart' as tzdata;
+
+/// Top-level callback for handling notification taps when app is killed.
+/// Must be a top-level function (not a method) for background isolates.
+@pragma('vm:entry-point')
+void _onBackgroundNotificationResponse(NotificationResponse response) {
+  debugPrint('📱 Background notification tapped: ${response.payload}');
+}
 
 class NotificationService {
   static final NotificationService _instance = NotificationService._internal();
@@ -11,46 +20,22 @@ class NotificationService {
       FlutterLocalNotificationsPlugin();
 
   bool _initialized = false;
+  bool _permissionsGranted = false;
 
+  /// Initialize the notification service. Safe to call multiple times.
   Future<void> initialize() async {
     if (_initialized) return;
 
-    // Initialize timezone database
+    // 1. Initialize timezone database FIRST
     tzdata.initializeTimeZones();
     
-    // Set local timezone — use IANA name directly.
-    // DateTime.now().timeZoneName returns abbreviations like 'IST' which
-    // tz.getLocation() doesn't understand. Use the IANA name instead.
-    try {
-      // Try to detect from UTC offset
-      final now = DateTime.now();
-      final offset = now.timeZoneOffset;
-      String ianaName;
-      
-      // Map common Indian offset to IANA name
-      if (offset.inHours == 5 && offset.inMinutes == 330) {
-        ianaName = 'Asia/Kolkata';
-      } else {
-        // Fallback: try the timeZoneName first, then default
-        try {
-          tz.setLocalLocation(tz.getLocation(now.timeZoneName));
-          ianaName = now.timeZoneName; // worked — it was already IANA
-        } catch (_) {
-          ianaName = 'Asia/Kolkata'; // hard fallback
-        }
-      }
-      
-      tz.setLocalLocation(tz.getLocation(ianaName));
-      print('✅ Timezone set to: $ianaName');
-    } catch (e) {
-      print('⚠️ Timezone setup error: $e — using UTC');
-    }
+    // 2. Set local timezone using IANA name
+    _setLocalTimezone();
 
-    // Android settings
+    // 3. Platform-specific initialization settings
     const AndroidInitializationSettings androidSettings =
         AndroidInitializationSettings('@mipmap/ic_launcher');
 
-    // iOS settings  
     const DarwinInitializationSettings iosSettings =
         DarwinInitializationSettings(
       requestAlertPermission: true,
@@ -63,85 +48,155 @@ class NotificationService {
       iOS: iosSettings,
     );
 
+    // 4. Initialize plugin with BOTH foreground and background callbacks
     await _notificationsPlugin.initialize(
       initSettings,
       onDidReceiveNotificationResponse: _onNotificationTapped,
+      onDidReceiveBackgroundNotificationResponse:
+          _onBackgroundNotificationResponse,
     );
 
-    // Request permissions for Android 13+
-    await _requestPermissions();
+    // 5. Request all necessary permissions
+    _permissionsGranted = await _requestPermissions();
 
     _initialized = true;
-    print('✅ NotificationService: Initialized successfully');
+    debugPrint('✅ NotificationService initialized (permissions=$_permissionsGranted)');
   }
 
-  Future<void> _requestPermissions() async {
+  /// Set the local timezone — handles the IST abbreviation issue
+  void _setLocalTimezone() {
+    try {
+      final offset = DateTime.now().timeZoneOffset;
+      String ianaName;
+
+      // Map by UTC offset → IANA name
+      final offsetMinutes = offset.inMinutes;
+      switch (offsetMinutes) {
+        case 330:
+          ianaName = 'Asia/Kolkata'; // IST (India)
+          break;
+        case 0:
+          ianaName = 'UTC';
+          break;
+        case -300:
+          ianaName = 'America/New_York'; // EST
+          break;
+        case -360:
+          ianaName = 'America/Chicago'; // CST
+          break;
+        case -420:
+          ianaName = 'America/Denver'; // MST
+          break;
+        case -480:
+          ianaName = 'America/Los_Angeles'; // PST
+          break;
+        case 60:
+          ianaName = 'Europe/London'; // BST
+          break;
+        case 120:
+          ianaName = 'Europe/Berlin'; // CEST
+          break;
+        case 540:
+          ianaName = 'Asia/Tokyo'; // JST
+          break;
+        default:
+          // Try system name, fallback to Asia/Kolkata
+          try {
+            final sysName = DateTime.now().timeZoneName;
+            tz.getLocation(sysName); // test if it works
+            ianaName = sysName;
+          } catch (_) {
+            ianaName = 'Asia/Kolkata';
+          }
+      }
+
+      tz.setLocalLocation(tz.getLocation(ianaName));
+      debugPrint('✅ Timezone: $ianaName (offset=${offset.inMinutes}min)');
+    } catch (e) {
+      // Last resort — use Asia/Kolkata
+      try {
+        tz.setLocalLocation(tz.getLocation('Asia/Kolkata'));
+        debugPrint('⚠️ Timezone fallback to Asia/Kolkata');
+      } catch (_) {
+        debugPrint('❌ Timezone setup completely failed');
+      }
+    }
+  }
+
+  /// Request all necessary permissions. Returns true if notifications allowed.
+  Future<bool> _requestPermissions() async {
+    if (!Platform.isAndroid) return true;
+
     final AndroidFlutterLocalNotificationsPlugin? androidPlugin =
         _notificationsPlugin.resolvePlatformSpecificImplementation<
             AndroidFlutterLocalNotificationsPlugin>();
 
-    if (androidPlugin != null) {
-      // Request notification permission (Android 13+)
-      final notificationGranted = await androidPlugin.requestNotificationsPermission();
-      print('📱 Notification permission: $notificationGranted');
-      
-      // Request exact alarm permission (Android 12+)
-      final exactAlarmGranted = await androidPlugin.requestExactAlarmsPermission();
-      print('⏰ Exact alarm permission: $exactAlarmGranted');
+    if (androidPlugin == null) return false;
+
+    // Request notification permission (Android 13+)
+    final notifGranted =
+        await androidPlugin.requestNotificationsPermission() ?? false;
+    debugPrint('📱 Notification permission: $notifGranted');
+
+    // Request exact alarm permission (Android 12+)
+    final alarmGranted =
+        await androidPlugin.requestExactAlarmsPermission() ?? false;
+    debugPrint('⏰ Exact alarm permission: $alarmGranted');
+
+    if (!notifGranted) {
+      debugPrint('❌ Notification permission DENIED — notifications will not work');
     }
+
+    return notifGranted;
   }
 
   void _onNotificationTapped(NotificationResponse response) {
-    print('📱 Notification tapped: ${response.payload}');
-    // Could navigate to task screen here if needed
+    debugPrint('📱 Notification tapped: ${response.payload}');
   }
 
-  Future<void> scheduleTaskReminder({
+  /// Schedule a notification at an exact time.
+  /// Works in foreground, background, and when app is killed.
+  Future<bool> scheduleTaskReminder({
     required int id,
     required String title,
     required String body,
     required DateTime scheduledDate,
   }) async {
-    if (!_initialized) {
-      await initialize();
+    // Ensure initialized
+    if (!_initialized) await initialize();
+
+    // Skip if in the past
+    final now = DateTime.now();
+    if (scheduledDate.isBefore(now)) {
+      debugPrint('⚠️ Skip (past): $title @ $scheduledDate');
+      return false;
     }
 
-    // Don't schedule if the date is in the past
-    if (scheduledDate.isBefore(DateTime.now())) {
-      print('⚠️ Scheduled date is in the past, skipping notification for: $title');
-      return;
-    }
-
-    // Convert to TZDateTime
-    final tz.TZDateTime scheduledTZDate = tz.TZDateTime(
+    // Build TZDateTime
+    final scheduledTZ = tz.TZDateTime(
       tz.local,
       scheduledDate.year,
       scheduledDate.month,
       scheduledDate.day,
       scheduledDate.hour,
       scheduledDate.minute,
-      scheduledDate.second,
     );
 
-    // Double-check: TZDateTime must be in the future
-    final now = tz.TZDateTime.now(tz.local);
-    if (scheduledTZDate.isBefore(now) || scheduledTZDate.isAtSameMomentAs(now)) {
-      print('⚠️ TZDateTime $scheduledTZDate is not in the future (now=$now), skipping');
-      return;
+    // Re-verify it's in the future after TZ conversion
+    final nowTZ = tz.TZDateTime.now(tz.local);
+    if (!scheduledTZ.isAfter(nowTZ)) {
+      debugPrint('⚠️ Skip (TZ past): $title @ $scheduledTZ (now=$nowTZ)');
+      return false;
     }
 
-    print('📅 Scheduling notification:');
-    print('   Title: $title');
-    print('   Original DateTime: $scheduledDate');
-    print('   TZ DateTime: $scheduledTZDate');
-    print('   Now: $now');
-    print('   Delta: ${scheduledTZDate.difference(now).inMinutes} minutes from now');
+    final deltaMinutes = scheduledTZ.difference(nowTZ).inMinutes;
+    debugPrint('📅 Scheduling: "$title" in $deltaMinutes min ($scheduledTZ)');
 
-    // Android notification details — use default sound for reliability
-    const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
-      'task_reminders',
+    // Notification details — HIGH importance, default sound for reliability
+    const androidDetails = AndroidNotificationDetails(
+      'hledger_task_reminders',
       'Task Reminders',
-      channelDescription: 'Notifications for task due date reminders',
+      channelDescription: 'Reminders for your tasks and deadlines',
       importance: Importance.max,
       priority: Priority.high,
       showWhen: true,
@@ -149,61 +204,93 @@ class NotificationService {
       playSound: true,
       autoCancel: true,
       enableLights: true,
+      // Show on lock screen
+      visibility: NotificationVisibility.public,
+      // Keep notification until dismissed
+      ongoing: false,
+      // Category for alarms
+      category: AndroidNotificationCategory.alarm,
     );
 
-    // iOS notification details
-    const DarwinNotificationDetails iosDetails = DarwinNotificationDetails(
+    const iosDetails = DarwinNotificationDetails(
       presentAlert: true,
       presentBadge: true,
       presentSound: true,
+      interruptionLevel: InterruptionLevel.timeSensitive,
     );
 
-    const NotificationDetails notificationDetails = NotificationDetails(
+    const details = NotificationDetails(
       android: androidDetails,
       iOS: iosDetails,
     );
 
     try {
+      // Use alarmClock mode — most reliable, shows alarm icon in status bar
+      // This uses AlarmManager.setAlarmClock() under the hood which is
+      // resistant to Doze mode and OEM battery optimizations
       await _notificationsPlugin.zonedSchedule(
         id,
         title,
         body,
-        scheduledTZDate,
-        notificationDetails,
+        scheduledTZ,
+        details,
         uiLocalNotificationDateInterpretation:
             UILocalNotificationDateInterpretation.absoluteTime,
-        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+        androidScheduleMode: AndroidScheduleMode.alarmClock,
         payload: 'task_$id',
       );
 
-      // Verify it's in pending list
+      // Verify scheduling
       final pending = await _notificationsPlugin.pendingNotificationRequests();
-      final found = pending.any((p) => p.id == id);
-      print('✅ Notification scheduled: "$title" for $scheduledTZDate (verified pending: $found)');
+      final verified = pending.any((p) => p.id == id);
+      debugPrint('✅ Scheduled: "$title" (id=$id, verified=$verified, '
+          'pending=${pending.length} total)');
+      
+      return verified;
     } catch (e) {
-      print('❌ Error scheduling notification: $e');
-      // Try showing immediate notification as fallback so user knows something went wrong
+      debugPrint('❌ Schedule failed: $e');
+      
+      // Fallback: try with inexact mode (less reliable but might work)
       try {
-        await showImmediateNotification(
-          id: id,
-          title: '⚠️ Reminder setup failed',
-          body: 'Could not schedule: $title. Please try again.',
+        await _notificationsPlugin.zonedSchedule(
+          id,
+          title,
+          body,
+          scheduledTZ,
+          details,
+          uiLocalNotificationDateInterpretation:
+              UILocalNotificationDateInterpretation.absoluteTime,
+          androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+          payload: 'task_$id',
         );
-      } catch (_) {}
+        debugPrint('⚠️ Scheduled with inexact fallback');
+        return true;
+      } catch (e2) {
+        debugPrint('❌ Inexact fallback also failed: $e2');
+        // Show immediate notification to warn user
+        await showImmediateNotification(
+          id: id + 100000,
+          title: '⚠️ Reminder could not be set',
+          body: 'Please check app permissions for: $title',
+        );
+        return false;
+      }
     }
   }
 
+  /// Cancel a specific notification
   Future<void> cancelNotification(int id) async {
     await _notificationsPlugin.cancel(id);
-    print('🗑️ Notification cancelled: $id');
+    debugPrint('🗑️ Cancelled notification: $id');
   }
 
+  /// Cancel all notifications
   Future<void> cancelAllNotifications() async {
     await _notificationsPlugin.cancelAll();
-    print('🗑️ All notifications cancelled');
+    debugPrint('🗑️ Cancelled all notifications');
   }
 
-  // Show an immediate notification (for testing)
+  /// Show a notification immediately (for testing or fallback)
   Future<void> showImmediateNotification({
     required int id,
     required String title,
@@ -211,38 +298,43 @@ class NotificationService {
   }) async {
     if (!_initialized) await initialize();
 
-    const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
-      'task_reminders',
+    const androidDetails = AndroidNotificationDetails(
+      'hledger_task_reminders',
       'Task Reminders',
-      channelDescription: 'Notifications for task due date reminders',
+      channelDescription: 'Reminders for your tasks and deadlines',
       importance: Importance.max,
       priority: Priority.high,
       playSound: true,
+      visibility: NotificationVisibility.public,
+      category: AndroidNotificationCategory.alarm,
     );
 
-    const DarwinNotificationDetails iosDetails = DarwinNotificationDetails(
+    const iosDetails = DarwinNotificationDetails(
       presentAlert: true,
       presentBadge: true,
       presentSound: true,
     );
 
-    const NotificationDetails notificationDetails = NotificationDetails(
+    const details = NotificationDetails(
       android: androidDetails,
       iOS: iosDetails,
     );
 
-    await _notificationsPlugin.show(
-      id,
-      title,
-      body,
-      notificationDetails,
-    );
-
-    print('✅ Immediate notification shown: "$title"');
+    await _notificationsPlugin.show(id, title, body, details);
+    debugPrint('✅ Immediate notification: "$title"');
   }
 
-  // Get pending notifications for debugging
+  /// Get all pending (scheduled) notifications
   Future<List<PendingNotificationRequest>> getPendingNotifications() async {
     return await _notificationsPlugin.pendingNotificationRequests();
+  }
+
+  /// Debug helper: log all pending notifications
+  Future<void> debugLogPending() async {
+    final pending = await getPendingNotifications();
+    debugPrint('📋 Pending notifications (${pending.length}):');
+    for (final p in pending) {
+      debugPrint('   #${p.id}: ${p.title} — ${p.body}');
+    }
   }
 }

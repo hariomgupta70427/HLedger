@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../models/transaction.dart';
 import '../models/task.dart';
+import '../services/notification_service.dart';
 import '../services/supabase_service.dart';
 
 class AppProvider extends ChangeNotifier {
@@ -49,6 +50,10 @@ class AppProvider extends ChangeNotifier {
 
       _tasks = await SupabaseService.getTasks();
       _lastLoadTime = DateTime.now();
+
+      // Re-schedule all future reminders on every app launch
+      // This ensures reminders survive device restarts and OEM battery kills
+      _rescheduleReminders();
     } catch (e) {
       debugPrint('Error loading data: $e');
     }
@@ -56,6 +61,27 @@ class AppProvider extends ChangeNotifier {
     _isLoadingTransactions = false;
     _isLoadingTasks = false;
     notifyListeners();
+  }
+
+  /// Re-schedule notifications for all tasks that have a future reminder.
+  /// Called on every app launch to ensure no reminders are lost.
+  void _rescheduleReminders() {
+    final now = DateTime.now();
+    int count = 0;
+    for (final task in _tasks) {
+      if (task.reminder && task.reminderTime != null && task.reminderTime!.isAfter(now)) {
+        NotificationService().scheduleTaskReminder(
+          id: task.id.hashCode,
+          title: '📝 Task Reminder',
+          body: task.title,
+          scheduledDate: task.reminderTime!,
+        );
+        count++;
+      }
+    }
+    if (count > 0) {
+      debugPrint('🔄 Re-scheduled $count reminder(s) on app launch');
+    }
   }
 
   Future<void> addTransaction(Transaction transaction) async {
