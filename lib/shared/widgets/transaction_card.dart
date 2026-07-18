@@ -33,6 +33,8 @@ class TransactionCard extends StatelessWidget {
         return Icons.school_rounded;
       case 'work':
         return Icons.work_rounded;
+      case 'friends & family':
+        return Icons.people_rounded;
       default:
         return Icons.swap_horiz_rounded;
     }

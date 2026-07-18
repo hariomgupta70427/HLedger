@@ -71,6 +71,10 @@ web/flutter_service_worker.js
 lib/core/constants/app_constants.dart
 !lib/core/constants/app_constants.dart.example
 
+# dart-define secrets file (real values); the .example template is committed
+dart_defines.json
+!dart_defines.example.json
+
 # Sensitive Files
 *.pem
 *.key
@@ -128,6 +132,9 @@ tmp/
 temp/
 *.tmp
 *.bak
+
+# Heap dumps / profiler output (can be huge and may contain in-memory secrets)
+*.hprof
 
 # Generated Documentation
 doc/api/

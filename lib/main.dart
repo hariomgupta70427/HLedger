@@ -3,10 +3,13 @@ import 'package:flutter/services.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
+import 'core/constants/app_constants.dart';
 import 'core/theme/app_theme.dart';
 import 'features/dashboard/dashboard_screen.dart';
 import 'providers/app_provider.dart';
+import 'services/home_widget_service.dart';
 import 'services/notification_service.dart';
+import 'services/sms_transaction_service.dart';
 import 'services/supabase_keep_alive.dart';
 import 'services/supabase_service.dart';
 
@@ -18,6 +21,14 @@ void main() async {
     statusBarIconBrightness: Brightness.light,
     systemNavigationBarColor: AppColors.background,
   ));
+
+  if (!AppConstants.hasRequiredSecrets) {
+    debugPrint(
+      '⚠️ Missing SUPABASE_URL / SUPABASE_ANON_KEY. '
+      'Run with --dart-define-from-file=dart_defines.json '
+      '(copy dart_defines.example.json first).',
+    );
+  }
 
   try {
     await SupabaseService.initialize();
@@ -33,6 +44,20 @@ void main() async {
 
   // Start keep-alive pinging
   SupabaseKeepAlive.start();
+
+  // Initialize home screen widgets bridge
+  try {
+    await HomeWidgetService.initialize();
+  } catch (e) {
+    debugPrint('HomeWidget init failed: $e');
+  }
+
+  // Initialize SMS auto-detection (requests permission on first launch)
+  try {
+    await SmsTransactionService.instance.initialize();
+  } catch (e) {
+    debugPrint('SMS service init failed: $e');
+  }
 
   runApp(const MyApp());
 }

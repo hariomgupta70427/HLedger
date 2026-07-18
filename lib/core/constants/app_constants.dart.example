@@ -1,7 +1,9 @@
-// IMPORTANT: Never commit actual credentials to GitHub!
-// Copy this file to app_constants.dart and fill in your actual values from:
-// - Supabase: https://supabase.com/dashboard
-// - Google Cloud Console: https://console.cloud.google.com/
+// This is a template. Copy it to app_constants.dart:
+//   cp lib/core/constants/app_constants.dart.example lib/core/constants/app_constants.dart
+//
+// Secrets are NOT stored in this file. They are injected at build time via
+// --dart-define-from-file=dart_defines.json (copy dart_defines.example.json).
+// Anything compiled into the APK is extractable, so never hardcode live keys.
 
 class AppConstants {
   static const String appName = 'HLedger';
@@ -9,22 +11,26 @@ class AppConstants {
       'Your Chat. Your Tasks. Your Transactions. Sorted.';
   static const String splashSubtext = 'Smart Ledger for Smarter You';
 
-  // Supabase Configuration
-  // Get these from your Supabase project settings
-  static const String supabaseUrl = 'YOUR_SUPABASE_URL_HERE';
-  static const String supabaseAnonKey = 'YOUR_SUPABASE_ANON_KEY_HERE';
+  // Secrets via --dart-define / --dart-define-from-file. No default values.
+  static const String supabaseUrl = String.fromEnvironment('SUPABASE_URL');
+  static const String supabaseAnonKey = String.fromEnvironment('SUPABASE_ANON_KEY');
+  static const String openRouterKey = String.fromEnvironment('OPENROUTER_KEY');
 
-  // Gemini API Configuration
-  // Get this from Google Cloud Console
-  static const String geminiApiKey = 'YOUR_GEMINI_API_KEY_HERE';
-  static const String geminiEndpoint =
-      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent';
+  /// True when all required secrets were provided at build time.
+  static bool get hasRequiredSecrets =>
+      supabaseUrl.isNotEmpty && supabaseAnonKey.isNotEmpty;
 
-  // OpenRouter API Configuration (Alternative to Gemini)
-  // Get this from https://openrouter.ai/keys
-  static const String openRouterApiUrl = 'https://openrouter.ai/api/v1/chat/completions';
-  static const String openRouterApiKey = 'YOUR_OPENROUTER_API_KEY_HERE';
-  static const String openRouterModel = 'google/gemma-2-9b-it:free'; // Reliable free model
+  // OpenRouter API
+  static const String openRouterApiUrl =
+      'https://openrouter.ai/api/v1/chat/completions';
+
+  // Model fallback order
+  static const List<String> openRouterModels = [
+    'google/gemini-2.0-flash-lite-001',
+    'google/gemma-3-12b-it:free',
+    'google/gemma-3-4b-it:free',
+    'mistralai/mistral-small-3.1-24b-instruct:free',
+  ];
 
   // Database Tables
   static const String usersTable = 'users';

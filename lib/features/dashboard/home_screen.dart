@@ -4,8 +4,10 @@ import 'package:provider/provider.dart';
 import '../../core/theme/app_theme.dart';
 import '../../providers/app_provider.dart';
 import '../../services/supabase_service.dart';
+import '../../shared/widgets/quick_actions.dart';
 import '../../shared/widgets/transaction_card.dart';
 import '../../main.dart';
+import '../upi_import/upi_import_screen.dart';
 
 /// Dashboard/Home screen — the landing page with analytics.
 class HomeScreen extends StatefulWidget {
@@ -19,6 +21,13 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
+  final ScrollController _scrollController = ScrollController();
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
   static const List<String> _quotes = [
     '"Beware of little expenses; a small leak will sink a great ship." — Benjamin Franklin',
     '"Do not save what is left after spending, spend what is left after saving." — Warren Buffett',
@@ -49,12 +58,26 @@ class _HomeScreenState extends State<HomeScreen> {
         child: Consumer<AppProvider>(
           builder: (context, provider, _) {
             return CustomScrollView(
+              controller: _scrollController,
               physics: const BouncingScrollPhysics(),
               slivers: [
                 // App bar
                 SliverToBoxAdapter(child: _buildAppBar(context)),
                 // Greeting card
                 SliverToBoxAdapter(child: _buildGreetingCard()),
+                // Quick actions
+                SliverToBoxAdapter(
+                  child: QuickActionsRow(
+                    onViewSummary: () {
+                      _scrollController.animateTo(
+                        _scrollController.position.maxScrollExtent,
+                        duration: const Duration(milliseconds: 600),
+                        curve: Curves.easeOutCubic,
+                      );
+                    },
+                    onNavigateToTab: widget.onNavigateToTab,
+                  ),
+                ),
                 // Quick stats
                 SliverToBoxAdapter(child: _buildQuickStats(provider)),
                 // Weekly chart
@@ -88,6 +111,27 @@ class _HomeScreenState extends State<HomeScreen> {
                 color: AppColors.accent,
               ),
             ),
+          ),
+          IconButton(
+            icon: Container(
+              padding: const EdgeInsets.all(6),
+              decoration: BoxDecoration(
+                color: AppColors.accent.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: const Icon(Icons.sms_rounded, color: AppColors.accent, size: 18),
+            ),
+            tooltip: 'Import UPI SMS',
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => UpiImportScreen(
+                    onNavigateToTab: widget.onNavigateToTab,
+                  ),
+                ),
+              );
+            },
           ),
           PopupMenuButton<String>(
             icon: const Icon(Icons.settings_rounded, color: AppColors.textSecondary),
@@ -411,6 +455,7 @@ class _HomeScreenState extends State<HomeScreen> {
       'Health': const Color(0xFFEF5350),
       'Education': const Color(0xFF66BB6A),
       'Work': const Color(0xFF5C6BC0),
+      'Friends & Family': const Color(0xFFEC407A),
       'Other': const Color(0xFF78909C),
     };
 

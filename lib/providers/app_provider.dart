@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../models/transaction.dart';
 import '../models/task.dart';
+import '../services/home_widget_service.dart';
 import '../services/notification_service.dart';
 import '../services/supabase_service.dart';
 
@@ -54,6 +55,9 @@ class AppProvider extends ChangeNotifier {
       // Re-schedule all future reminders on every app launch
       // This ensures reminders survive device restarts and OEM battery kills
       _rescheduleReminders();
+
+      // Push latest data to home screen widgets
+      _updateWidgets();
     } catch (e) {
       debugPrint('Error loading data: $e');
     }
@@ -84,12 +88,21 @@ class AppProvider extends ChangeNotifier {
     }
   }
 
+  /// Push latest data to all home screen widgets.
+  void _updateWidgets() {
+    HomeWidgetService.updateAllWidgets(
+      transactions: _transactions,
+      tasks: _tasks,
+    );
+  }
+
   Future<void> addTransaction(Transaction transaction) async {
     try {
       final newTransaction = await SupabaseService.addTransaction(transaction);
       _transactions.insert(0, newTransaction);
       _lastLoadTime = DateTime.now();
       notifyListeners();
+      _updateWidgets();
     } catch (e) {
       debugPrint('Error adding transaction: $e');
       rethrow;
@@ -103,6 +116,7 @@ class AppProvider extends ChangeNotifier {
       _tasks.insert(0, newTask);
       _lastLoadTime = DateTime.now();
       notifyListeners();
+      _updateWidgets();
       return newTask;
     } catch (e) {
       debugPrint('Error adding task: $e');
@@ -118,6 +132,7 @@ class AppProvider extends ChangeNotifier {
         _tasks[index] = updatedTask;
         _lastLoadTime = DateTime.now();
         notifyListeners();
+        _updateWidgets();
       }
     } catch (e) {
       debugPrint('Error updating task: $e');
@@ -133,6 +148,7 @@ class AppProvider extends ChangeNotifier {
         _transactions[index] = updatedTransaction;
         _lastLoadTime = DateTime.now();
         notifyListeners();
+        _updateWidgets();
       }
     } catch (e) {
       debugPrint('Error updating transaction: $e');
@@ -146,6 +162,7 @@ class AppProvider extends ChangeNotifier {
       _transactions.removeWhere((t) => t.id == id);
       _lastLoadTime = DateTime.now();
       notifyListeners();
+      _updateWidgets();
     } catch (e) {
       debugPrint('Error deleting transaction: $e');
       rethrow;
@@ -158,6 +175,7 @@ class AppProvider extends ChangeNotifier {
       _tasks.removeWhere((t) => t.id == id);
       _lastLoadTime = DateTime.now();
       notifyListeners();
+      _updateWidgets();
     } catch (e) {
       debugPrint('Error deleting task: $e');
       rethrow;

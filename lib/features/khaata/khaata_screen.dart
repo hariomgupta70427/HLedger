@@ -28,7 +28,8 @@ class KhaataScreenState extends State<KhaataScreen> {
 
   static const _categories = [
     'Food', 'Transport', 'Shopping', 'Bills',
-    'Entertainment', 'Health', 'Education', 'Work', 'Other',
+    'Entertainment', 'Health', 'Education', 'Work',
+    'Friends & Family', 'Other',
   ];
 
   /// Called by DashboardScreen FAB to open add transaction sheet.

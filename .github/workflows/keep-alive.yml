@@ -1,0 +1,65 @@
+name: Supabase Keep-Alive
+
+# Prevents the Supabase Free-tier project from pausing due to inactivity.
+# Free projects pause after ~7 days of no activity; this pings daily so the
+# database executes a lightweight query well within that window.
+
+on:
+  schedule:
+    # Runs once every 24h at 06:00 UTC. GitHub may delay scheduled runs
+    # under load, so daily (vs. weekly) keeps a wide safety margin.
+    - cron: "0 6 * * *"
+  workflow_dispatch: {} # Allow manual runs from the Actions tab.
+
+# Least privilege: this job reads nothing from the repo.
+permissions: {}
+
+concurrency:
+  group: supabase-keep-alive
+  cancel-in-progress: false
+
+jobs:
+  ping:
+    name: Ping Supabase
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Query Supabase REST endpoint
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${SUPABASE_URL:-}" ] || [ -z "${SUPABASE_ANON_KEY:-}" ]; then
+            echo "::error::Missing SUPABASE_URL or SUPABASE_ANON_KEY secret."
+            exit 1
+          fi
+
+          # Lightest possible DB operation: select a single column, one row.
+          # RLS may return an empty array — that's fine, the query still runs.
+          ENDPOINT="${SUPABASE_URL%/}/rest/v1/transactions?select=id&limit=1"
+          echo "Pinging: ${SUPABASE_URL%/}/rest/v1/transactions?select=id&limit=1"
+
+          HTTP_CODE=$(curl -sS \
+            --retry 3 --retry-delay 5 --retry-all-errors \
+            --max-time 30 \
+            -o /tmp/response.json \
+            -w "%{http_code}" \
+            -H "apikey: ${SUPABASE_ANON_KEY}" \
+            -H "Authorization: Bearer ${SUPABASE_ANON_KEY}" \
+            -H "Accept: application/json" \
+            "${ENDPOINT}")
+
+          echo "HTTP status: ${HTTP_CODE}"
+          echo "Response body:"
+          cat /tmp/response.json || true
+          echo ""
+
+          # PostgREST returns 200 (or 206 for partial content) on success.
+          if [ "${HTTP_CODE}" = "200" ] || [ "${HTTP_CODE}" = "206" ]; then
+            echo "::notice::Supabase keep-alive ping succeeded (HTTP ${HTTP_CODE})."
+          else
+            echo "::error::Supabase keep-alive ping failed (HTTP ${HTTP_CODE})."
+            exit 1
+          fi
