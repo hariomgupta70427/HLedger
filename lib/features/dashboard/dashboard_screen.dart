@@ -32,6 +32,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final provider = Provider.of<AppProvider>(context, listen: false);
       provider.loadData();
+      // Load the on-device review queue and start app-wide auto-detection.
+      provider.loadPendingReview();
     });
   }
 

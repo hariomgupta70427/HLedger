@@ -11,6 +11,7 @@ import '../../services/supabase_service.dart';
 import '../../shared/widgets/balance_summary.dart';
 import '../../shared/widgets/shimmer_skeleton.dart';
 import '../../shared/widgets/transaction_card.dart';
+import '../upi_import/upi_import_screen.dart';
 
 class KhaataScreen extends StatefulWidget {
   const KhaataScreen({super.key});
@@ -78,6 +79,11 @@ class KhaataScreenState extends State<KhaataScreen> {
                       totalExpense: provider.totalExpense,
                     ),
                   ),
+                  // Review-queue banner (auto-detected transactions)
+                  if (provider.pendingReviewCount > 0)
+                    SliverToBoxAdapter(
+                      child: _buildReviewBanner(provider.pendingReviewCount),
+                    ),
                   // Section header
                   SliverToBoxAdapter(
                     child: Padding(
@@ -157,6 +163,77 @@ class KhaataScreenState extends State<KhaataScreen> {
           },
         ),
       ),
+    );
+  }
+
+  /// Banner shown when auto-detected transactions await review. Tapping it
+  /// opens the review inbox.
+  Widget _buildReviewBanner(int count) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(16),
+          onTap: () {
+            Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const UpiImportScreen()),
+            );
+          },
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [
+                  AppColors.accent.withValues(alpha: 0.18),
+                  AppColors.accent.withValues(alpha: 0.06),
+                ],
+              ),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: AppColors.accent.withValues(alpha: 0.35)),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: AppColors.accent.withValues(alpha: 0.2),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(Icons.auto_awesome_rounded,
+                      color: AppColors.accent, size: 20),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '$count transaction${count == 1 ? '' : 's'} to review',
+                        style: GoogleFonts.inter(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.textPrimary,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        'Auto-detected from your notifications',
+                        style: GoogleFonts.inter(
+                          fontSize: 12,
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const Icon(Icons.chevron_right_rounded,
+                    color: AppColors.textSecondary),
+              ],
+            ),
+          ),
+        ),
+      ).animate().fadeIn(duration: 300.ms).slideY(begin: -0.1),
     );
   }
 

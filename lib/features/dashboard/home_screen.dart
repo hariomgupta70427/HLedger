@@ -8,6 +8,8 @@ import '../../shared/widgets/quick_actions.dart';
 import '../../shared/widgets/transaction_card.dart';
 import '../../main.dart';
 import '../upi_import/upi_import_screen.dart';
+import '../analytics/analytics_screen.dart';
+import '../compliance/privacy_policy_screen.dart';
 
 /// Dashboard/Home screen — the landing page with analytics.
 class HomeScreen extends StatefulWidget {
@@ -119,6 +121,23 @@ class _HomeScreenState extends State<HomeScreen> {
                 color: AppColors.accent.withValues(alpha: 0.12),
                 borderRadius: BorderRadius.circular(10),
               ),
+              child: const Icon(Icons.insights_rounded, color: AppColors.accent, size: 18),
+            ),
+            tooltip: 'Analytics',
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const AnalyticsScreen()),
+              );
+            },
+          ),
+          IconButton(
+            icon: Container(
+              padding: const EdgeInsets.all(6),
+              decoration: BoxDecoration(
+                color: AppColors.accent.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(10),
+              ),
               child: const Icon(Icons.sms_rounded, color: AppColors.accent, size: 18),
             ),
             tooltip: 'Import UPI SMS',
@@ -140,9 +159,26 @@ class _HomeScreenState extends State<HomeScreen> {
             onSelected: (value) async {
               if (value == 'logout') {
                 await _confirmLogout(context);
+              } else if (value == 'privacy') {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const PrivacyPolicyScreen()),
+                );
               }
             },
             itemBuilder: (_) => [
+              PopupMenuItem(
+                value: 'privacy',
+                child: Row(
+                  children: [
+                    const Icon(Icons.privacy_tip_rounded,
+                        color: AppColors.textSecondary, size: 20),
+                    const SizedBox(width: 10),
+                    Text('Privacy Policy',
+                        style: GoogleFonts.inter(color: AppColors.textPrimary)),
+                  ],
+                ),
+              ),
               PopupMenuItem(
                 value: 'logout',
                 child: Row(

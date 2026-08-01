@@ -1,13 +1,20 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../models/transaction.dart';
 import '../models/task.dart';
 import '../services/home_widget_service.dart';
 import '../services/notification_service.dart';
+import '../services/pending_transaction_store.dart';
+import '../services/sms_transaction_service.dart';
+import '../services/transaction_classifier.dart';
+import '../services/upi_parser.dart';
 import '../services/supabase_service.dart';
 
 class AppProvider extends ChangeNotifier {
   List<Transaction> _transactions = [];
   List<Task> _tasks = [];
+  List<Transaction> _pendingReview = [];
+  StreamSubscription<UpiParseResult>? _detectionSub;
   bool _isLoadingTransactions = false;
   bool _isLoadingTasks = false;
   DateTime? _lastLoadTime;
@@ -15,6 +22,11 @@ class AppProvider extends ChangeNotifier {
 
   List<Transaction> get transactions => _transactions;
   List<Task> get tasks => _tasks;
+
+  /// Auto-detected transactions awaiting user review (on-device only).
+  List<Transaction> get pendingReview => List.unmodifiable(_pendingReview);
+  int get pendingReviewCount => _pendingReview.length;
+
   bool get isLoading => _isLoadingTransactions || _isLoadingTasks;
   bool get isLoadingTransactions => _isLoadingTransactions;
   bool get isLoadingTasks => _isLoadingTasks;
@@ -191,5 +203,85 @@ class AppProvider extends ChangeNotifier {
 
   Future<void> refresh() async {
     await loadData(forceRefresh: true);
+  }
+
+  // ── Review queue (auto-detected transactions) ──
+
+  /// Load the on-device pending review queue and start listening for new
+  /// auto-detected transactions app-wide (so capture works regardless of which
+  /// screen is open). Safe to call on startup.
+  Future<void> loadPendingReview() async {
+    _pendingReview = await PendingTransactionStore.load();
+    notifyListeners();
+    _startDetectionListener();
+  }
+
+  /// Subscribe to the notification-listener detection stream and route each
+  /// parsed transaction through the on-device classifier into the review queue.
+  void _startDetectionListener() {
+    _detectionSub?.cancel();
+    _detectionSub =
+        SmsTransactionService.instance.onTransactionDetected.listen((parsed) {
+      final userId = SupabaseService.currentUser?.id;
+      if (userId == null) return;
+      final pending =
+          TransactionClassifier.toPendingTransaction(parsed, userId: userId);
+      addToReviewQueue(pending);
+    });
+  }
+
+  /// Add a newly auto-detected transaction to the on-device review queue.
+  /// De-dupes against existing pending entries with the same amount + label
+  /// within a short window to avoid double-capture of the same notification.
+  Future<void> addToReviewQueue(Transaction detected) async {
+    final isDup = _pendingReview.any((t) =>
+        t.amount == detected.amount &&
+        t.displayLabel == detected.displayLabel &&
+        detected.timestamp.difference(t.timestamp).abs() <
+            const Duration(minutes: 2));
+    if (isDup) return;
+
+    _pendingReview.insert(0, detected);
+    await PendingTransactionStore.save(_pendingReview);
+    notifyListeners();
+  }
+
+  /// Confirm a pending entry: persist it to Supabase as a real transaction
+  /// and remove it from the on-device queue. [edited] lets the user tweak
+  /// fields before confirming.
+  Future<void> confirmPending(String pendingId, {Transaction? edited}) async {
+    final index = _pendingReview.indexWhere((t) => t.id == pendingId);
+    if (index == -1) return;
+
+    final toSave = (edited ?? _pendingReview[index]).copyWith(
+      id: '', // let Supabase assign the real id
+      status: TransactionStatus.confirmed,
+    );
+
+    await addTransaction(toSave);
+
+    _pendingReview.removeAt(index);
+    await PendingTransactionStore.save(_pendingReview);
+    notifyListeners();
+  }
+
+  /// Reject (dismiss) a pending entry without saving it anywhere.
+  Future<void> rejectPending(String pendingId) async {
+    _pendingReview.removeWhere((t) => t.id == pendingId);
+    await PendingTransactionStore.save(_pendingReview);
+    notifyListeners();
+  }
+
+  /// Clear the entire review queue.
+  Future<void> clearReviewQueue() async {
+    _pendingReview.clear();
+    await PendingTransactionStore.clear();
+    notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    _detectionSub?.cancel();
+    super.dispose();
   }
 }

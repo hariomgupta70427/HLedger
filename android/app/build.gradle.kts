@@ -70,3 +70,14 @@ dependencies {
     implementation("androidx.glance:glance-appwidget:1.1.1")
     implementation("androidx.glance:glance-material3:1.1.1")
 }
+
+// The home_widget plugin declares "androidx.glance:glance-appwidget:1.+",
+// which resolves to 1.3.0-alpha02 and demands compileSdk 37 / AGP 9.1.0.
+// Pin all Glance artifacts to stable 1.1.1 so the project stays on SDK 36.
+configurations.all {
+    resolutionStrategy {
+        force("androidx.glance:glance-appwidget:1.1.1")
+        force("androidx.glance:glance-material3:1.1.1")
+        force("androidx.glance:glance:1.1.1")
+    }
+}

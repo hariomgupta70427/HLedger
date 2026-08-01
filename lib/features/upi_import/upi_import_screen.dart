@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -8,14 +7,19 @@ import '../../core/theme/app_theme.dart';
 import '../../models/transaction.dart';
 import '../../providers/app_provider.dart';
 import '../../services/sms_transaction_service.dart';
-import '../../services/supabase_service.dart';
-import '../../services/upi_parser.dart';
+import '../../services/transaction_classifier.dart';
+import '../compliance/prominent_disclosure_dialog.dart';
 
-/// Auto-detecting UPI import screen.
+/// Review inbox for auto-detected UPI/bank transactions.
 ///
-/// Listens for incoming bank/UPI notifications and shows detected
-/// transactions as cards. User can review, edit, and import each one
-/// to Khaata.
+/// Detection runs app-wide (see [AppProvider] detection listener). This screen
+/// shows the on-device pending queue and lets the user confirm, edit, or reject
+/// each entry before it enters the Khaata book. Nothing is saved to the server
+/// until the user confirms — the queue lives only on the device.
+///
+/// COMPLIANCE: before requesting notification access, callers show the
+/// prominent-disclosure dialog (see lib/features/compliance/). See
+/// [_ensurePermission].
 class UpiImportScreen extends StatefulWidget {
   final void Function(int tabIndex)? onNavigateToTab;
 
@@ -27,18 +31,8 @@ class UpiImportScreen extends StatefulWidget {
 
 class _UpiImportScreenState extends State<UpiImportScreen> {
   final _smsService = SmsTransactionService.instance;
-  List<UpiParseResult> _detected = [];
-  bool _isScanning = false;
-  bool _permissionDenied = false;
-  StreamSubscription<UpiParseResult>? _realtimeSub;
-
-  // Editable fields for the currently selected transaction
-  int? _expandedIndex;
-  final _amountController = TextEditingController();
-  final _descriptionController = TextEditingController();
-  String _selectedCategory = 'Other';
-  String _selectedType = 'expense';
-  bool _isSaving = false;
+  bool _isChecking = false;
+  bool _autoDetectOn = false;
 
   static const _categories = [
     'Food', 'Transport', 'Shopping', 'Bills',
@@ -49,156 +43,58 @@ class _UpiImportScreenState extends State<UpiImportScreen> {
   @override
   void initState() {
     super.initState();
-    _initAndScan();
+    _refreshStatus();
   }
 
-  Future<void> _initAndScan() async {
-    setState(() => _isScanning = true);
-
+  /// On open, only CHECK whether auto-detect is already enabled — never prompt.
+  ///
+  /// This is the fix for the old flow that ambushed the user with a permission
+  /// dialog the moment the screen opened. Enabling auto-detect is now a
+  /// deliberate opt-in tap (see [_enableAutoDetect]). Detection itself still
+  /// runs app-wide from startup (main.dart + AppProvider), so this screen just
+  /// reflects state — turning it off here does not exist; Android owns that.
+  Future<void> _refreshStatus() async {
+    setState(() => _isChecking = true);
     try {
-      // Check if permission is already granted
-      final hasPermission = await _smsService.initialize();
-
-      if (!hasPermission) {
-        // Request permission — opens Android notification access settings
-        final granted = await _smsService.requestPermission();
-        if (!granted) {
-          if (mounted) {
-            setState(() {
-              _isScanning = false;
-              _permissionDenied = true;
-            });
-          }
-          return;
-        }
-      }
-
-      // Load any already-detected transactions
-      _detected = List.from(_smsService.detectedTransactions);
-
-      // Listen for real-time notifications
-      _realtimeSub?.cancel();
-      _realtimeSub = _smsService.onTransactionDetected.listen((result) {
-        if (mounted) {
-          setState(() {
-            _detected.insert(0, result);
-          });
-          _showSnackBar('🔔 New UPI transaction detected!');
-        }
-      });
-
+      // initialize() only checks permission (isPermissionGranted) and starts
+      // listening if already granted — it never opens a system prompt.
+      final has = await _smsService.initialize();
       if (mounted) {
         setState(() {
-          _isScanning = false;
-          _permissionDenied = false;
+          _isChecking = false;
+          _autoDetectOn = has;
         });
       }
     } catch (e) {
-      debugPrint('❌ Notification listener error: $e');
-      if (mounted) {
-        setState(() => _isScanning = false);
-      }
+      debugPrint('❌ Notification listener check failed: $e');
+      if (mounted) setState(() => _isChecking = false);
     }
   }
 
-  @override
-  void dispose() {
-    _realtimeSub?.cancel();
-    _amountController.dispose();
-    _descriptionController.dispose();
-    super.dispose();
-  }
+  /// Deliberate opt-in: the user tapped "Turn on auto-detect".
+  ///
+  /// COMPLIANCE: Google Play requires a prominent in-app disclosure shown
+  /// BEFORE requesting notification-listener access. We only open the system
+  /// settings after the user accepts [ProminentDisclosure.show]. Granting here
+  /// enables the same app-wide detection path — breakdown auto-detect keeps
+  /// working exactly as before.
+  Future<void> _enableAutoDetect() async {
+    final accepted = await ProminentDisclosure.show(context);
+    if (!accepted || !mounted) return;
 
-  void _expandCard(int index) {
-    final result = _detected[index];
-    setState(() {
-      _expandedIndex = _expandedIndex == index ? null : index;
-      if (_expandedIndex == index) {
-        _amountController.text = result.amount.toStringAsFixed(
-          result.amount.truncateToDouble() == result.amount ? 0 : 2,
-        );
-        _selectedType = result.transactionType;
-        _selectedCategory = result.suggestedCategory;
-        final parts = <String>[];
-        if (result.vpa != null) parts.add('UPI: ${result.vpa}');
-        if (result.bankName != null) parts.add(result.bankName!);
-        if (result.referenceNumber != null) parts.add('Ref: ${result.referenceNumber}');
-        _descriptionController.text = parts.join(' · ');
-      }
-    });
-  }
-
-  Future<void> _importTransaction(int index) async {
-    final userId = SupabaseService.currentUser?.id;
-    if (userId == null) return;
-    final result = _detected[index];
-
-    final amountText = _amountController.text.trim();
-    final amount = double.tryParse(amountText);
-    if (amount == null || amount <= 0) {
-      _showSnackBar('Please enter a valid amount', isError: true);
-      return;
-    }
-
-    setState(() => _isSaving = true);
-
-    final desc = _descriptionController.text.trim().isEmpty
-        ? null
-        : _descriptionController.text.trim();
-
-    final transaction = Transaction(
-      id: '',
-      userId: userId,
-      amount: amount,
-      type: _selectedType,
-      category: _selectedCategory,
-      description: desc,
-      person: desc ?? '',
-      timestamp: result.date ?? DateTime.now(),
-    );
-
+    setState(() => _isChecking = true);
     try {
-      final provider = Provider.of<AppProvider>(context, listen: false);
-      await provider.addTransaction(transaction);
-      if (!mounted) return;
-
-      // Remove from detected list
-      setState(() {
-        _detected.removeAt(index);
-        _expandedIndex = null;
-        _isSaving = false;
-      });
-      _smsService.removeDetected(index);
-
-      _showSnackBar('Transaction imported ✅');
-    } catch (e) {
-      debugPrint('❌ UPI import error: $e');
+      final granted = await _smsService.requestPermission();
       if (mounted) {
-        _showSnackBar('Failed to import: $e', isError: true);
-        setState(() => _isSaving = false);
+        setState(() {
+          _isChecking = false;
+          _autoDetectOn = granted;
+        });
       }
+    } catch (e) {
+      debugPrint('❌ Notification listener enable failed: $e');
+      if (mounted) setState(() => _isChecking = false);
     }
-  }
-
-  void _dismissTransaction(int index) {
-    setState(() {
-      _detected.removeAt(index);
-      if (_expandedIndex == index) _expandedIndex = null;
-      if (_expandedIndex != null && _expandedIndex! > index) {
-        _expandedIndex = _expandedIndex! - 1;
-      }
-    });
-    _smsService.removeDetected(index);
-    _showSnackBar('Transaction dismissed');
-  }
-
-  void _showSnackBar(String message, {bool isError = false}) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message, style: GoogleFonts.inter()),
-        backgroundColor: isError ? AppColors.red : AppColors.surface2,
-      ),
-    );
   }
 
   @override
@@ -221,11 +117,12 @@ class _UpiImportScreenState extends State<UpiImportScreen> {
                 color: AppColors.accent.withValues(alpha: 0.15),
                 borderRadius: BorderRadius.circular(8),
               ),
-              child: const Icon(Icons.sms_rounded, color: AppColors.accent, size: 18),
+              child: const Icon(Icons.auto_awesome_rounded,
+                  color: AppColors.accent, size: 18),
             ),
             const SizedBox(width: 10),
             Text(
-              'UPI Auto-Detect',
+              'Review Inbox',
               style: GoogleFonts.inter(
                 fontSize: 18,
                 fontWeight: FontWeight.w600,
@@ -235,80 +132,94 @@ class _UpiImportScreenState extends State<UpiImportScreen> {
           ],
         ),
         actions: [
-          if (!_isScanning)
-            IconButton(
-              icon: const Icon(Icons.refresh_rounded, color: AppColors.textSecondary),
-              onPressed: _initAndScan,
-              tooltip: 'Refresh',
-            ),
+          Consumer<AppProvider>(
+            builder: (context, provider, _) {
+              if (provider.pendingReviewCount == 0) return const SizedBox.shrink();
+              return TextButton(
+                onPressed: () => _confirmClearAll(provider),
+                child: Text('Clear all',
+                    style: GoogleFonts.inter(color: AppColors.textSecondary)),
+              );
+            },
+          ),
         ],
       ),
-      body: SafeArea(
-        child: _buildBody(),
-      ),
+      body: SafeArea(child: _buildBody()),
     );
   }
 
   Widget _buildBody() {
-    if (_isScanning) {
-      return _buildScanningState();
-    }
-    if (_permissionDenied) {
-      return _buildPermissionDeniedState();
-    }
-    if (_detected.isEmpty) {
-      return _buildEmptyState();
-    }
-    return _buildTransactionList();
+    if (_isChecking) return _buildCheckingState();
+
+    return Consumer<AppProvider>(
+      builder: (context, provider, _) {
+        final pending = provider.pendingReview;
+        // If there are already detected transactions, always show them —
+        // even if the OS toggle was later revoked, the queue is still useful.
+        if (pending.isEmpty) {
+          return _autoDetectOn ? _buildEmptyState() : _buildOptInState();
+        }
+
+        return ListView.builder(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+          itemCount: pending.length + 1,
+          itemBuilder: (context, index) {
+            if (index == 0) return _buildHeader(pending.length);
+            final txn = pending[index - 1];
+            return _PendingCard(
+              key: ValueKey(txn.id),
+              transaction: txn,
+              categories: _categories,
+              onConfirm: (edited) => provider.confirmPending(txn.id, edited: edited),
+              onReject: () => provider.rejectPending(txn.id),
+            ).animate().fadeIn(duration: 250.ms).slideY(begin: 0.1);
+          },
+        );
+      },
+    );
   }
 
-  Widget _buildScanningState() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
+  Widget _buildHeader(int count) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12, top: 4),
+      child: Row(
         children: [
-          Container(
-            width: 80,
-            height: 80,
-            decoration: BoxDecoration(
-              color: AppColors.accent.withValues(alpha: 0.12),
-              shape: BoxShape.circle,
-            ),
-            child: const Center(
-              child: SizedBox(
-                width: 36,
-                height: 36,
-                child: CircularProgressIndicator(
-                  color: AppColors.accent,
-                  strokeWidth: 3,
-                ),
+          Expanded(
+            child: Text(
+              '$count transaction${count == 1 ? '' : 's'} detected',
+              style: GoogleFonts.inter(
+                fontSize: 14,
+                color: AppColors.textSecondary,
               ),
             ),
-          ).animate(onPlay: (c) => c.repeat())
-              .shimmer(duration: 1500.ms, color: AppColors.accent.withValues(alpha: 0.3)),
-          const SizedBox(height: 24),
-          Text(
-            'Setting up auto-detection...',
-            style: GoogleFonts.inter(
-              fontSize: 18,
-              fontWeight: FontWeight.w600,
-              color: AppColors.textPrimary,
-            ),
           ),
-          const SizedBox(height: 8),
-          Text(
-            'Enabling notification listener for UPI transactions',
-            style: GoogleFonts.inter(
-              fontSize: 13,
-              color: AppColors.textSecondary,
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(
+              color: AppColors.accent.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Text(
+              'On-device only',
+              style: GoogleFonts.inter(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: AppColors.accent,
+              ),
             ),
           ),
         ],
       ),
-    ).animate().fadeIn(duration: 400.ms);
+    );
   }
 
-  Widget _buildPermissionDeniedState() {
+  Widget _buildCheckingState() {
+    return const Center(
+      child: CircularProgressIndicator(color: AppColors.accent),
+    );
+  }
+
+  Widget _buildEmptyState() {
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(32),
@@ -316,182 +227,333 @@ class _UpiImportScreenState extends State<UpiImportScreen> {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Container(
-              width: 80,
-              height: 80,
+              width: 72,
+              height: 72,
               decoration: BoxDecoration(
-                color: AppColors.red.withValues(alpha: 0.12),
+                color: AppColors.surface,
                 shape: BoxShape.circle,
+                border: Border.all(color: AppColors.border),
               ),
-              child: const Icon(Icons.notifications_off_rounded, color: AppColors.red, size: 40),
+              child: const Icon(Icons.inbox_rounded,
+                  color: AppColors.textSecondary, size: 32),
             ),
-            const SizedBox(height: 24),
+            const SizedBox(height: 20),
             Text(
-              'Notification Access Required',
+              'No transactions to review',
               style: GoogleFonts.inter(
-                fontSize: 20,
-                fontWeight: FontWeight.bold,
+                fontSize: 18,
+                fontWeight: FontWeight.w600,
                 color: AppColors.textPrimary,
               ),
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 8),
             Text(
-              'HLedger needs notification access to automatically detect UPI transactions from your bank notifications.\n\nTap below to open Settings and enable HLedger.',
+              'When your bank or UPI app posts a payment notification, '
+              'it will show up here for you to confirm.',
               textAlign: TextAlign.center,
               style: GoogleFonts.inter(
-                fontSize: 13,
+                fontSize: 14,
                 color: AppColors.textSecondary,
                 height: 1.5,
               ),
             ),
-            const SizedBox(height: 28),
-            SizedBox(
-              width: 200,
-              height: 50,
-              child: ElevatedButton.icon(
-                onPressed: _initAndScan,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.accent,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                ),
-                icon: const Icon(Icons.settings_rounded, color: Colors.white, size: 18),
-                label: Text(
-                  'Open Settings',
-                  style: GoogleFonts.inter(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.white,
-                  ),
-                ),
-              ),
-            ),
           ],
         ),
       ),
-    ).animate().fadeIn(duration: 400.ms);
-  }
-
-  Widget _buildEmptyState() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Container(
-            width: 80,
-            height: 80,
-            decoration: BoxDecoration(
-              color: AppColors.green.withValues(alpha: 0.12),
-              shape: BoxShape.circle,
-            ),
-            child: const Icon(Icons.check_circle_rounded, color: AppColors.green, size: 40),
-          ),
-          const SizedBox(height: 24),
-          Text(
-            'All caught up!',
-            style: GoogleFonts.inter(
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-              color: AppColors.textPrimary,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'No UPI transactions found in recent messages.\nNew ones will appear here automatically.',
-            textAlign: TextAlign.center,
-            style: GoogleFonts.inter(
-              fontSize: 13,
-              color: AppColors.textSecondary,
-              height: 1.5,
-            ),
-          ),
-          const SizedBox(height: 24),
-          OutlinedButton.icon(
-            onPressed: _initAndScan,
-            style: OutlinedButton.styleFrom(
-              side: const BorderSide(color: AppColors.border),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(14),
-              ),
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-            ),
-            icon: const Icon(Icons.refresh_rounded, color: AppColors.accent, size: 18),
-            label: Text(
-              'Scan Again',
-              style: GoogleFonts.inter(
-                color: AppColors.accent,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-        ],
-      ),
-    ).animate().fadeIn(duration: 400.ms);
-  }
-
-  Widget _buildTransactionList() {
-    return Column(
-      children: [
-        // Info banner
-        _buildInfoBanner(),
-        // List
-        Expanded(
-          child: ListView.builder(
-            physics: const BouncingScrollPhysics(),
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-            itemCount: _detected.length,
-            itemBuilder: (context, index) => _buildTransactionCard(index),
-          ),
-        ),
-      ],
     );
   }
 
-  Widget _buildInfoBanner() {
-    return Container(
-      margin: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [
-            AppColors.accent.withValues(alpha: 0.08),
-            AppColors.accentLight.withValues(alpha: 0.04),
-          ],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.accent.withValues(alpha: 0.15)),
-      ),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: AppColors.accent.withValues(alpha: 0.15),
-              borderRadius: BorderRadius.circular(10),
+  /// Friendly, optional invitation to turn on auto-detect. This is NOT an
+  /// error/blocked state — the app is fully usable without it (add transactions
+  /// manually or via chat). Enabling is a deliberate tap, never an ambush.
+  Widget _buildOptInState() {
+    return Center(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              width: 72,
+              height: 72,
+              decoration: BoxDecoration(
+                color: AppColors.accent.withValues(alpha: 0.12),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.auto_awesome_rounded,
+                  color: AppColors.accent, size: 32),
             ),
-            child: const Icon(Icons.auto_awesome_rounded, color: AppColors.accent, size: 18),
+            const SizedBox(height: 20),
+            Text(
+              'Auto-detect payments (optional)',
+              textAlign: TextAlign.center,
+              style: GoogleFonts.inter(
+                fontSize: 18,
+                fontWeight: FontWeight.w600,
+                color: AppColors.textPrimary,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Let HLedger read your bank/UPI payment notifications so it can '
+              'suggest transactions here — you still confirm each one. '
+              'Everything stays on your device.',
+              textAlign: TextAlign.center,
+              style: GoogleFonts.inter(
+                fontSize: 14,
+                color: AppColors.textSecondary,
+                height: 1.5,
+              ),
+            ),
+            const SizedBox(height: 24),
+            ElevatedButton(
+              onPressed: _enableAutoDetect,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.accent,
+                padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 14),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
+              ),
+              child: Text(
+                'Turn on auto-detect',
+                style: GoogleFonts.inter(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.white,
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'You can always add transactions manually or by chat.',
+              textAlign: TextAlign.center,
+              style: GoogleFonts.inter(
+                fontSize: 12,
+                color: AppColors.textSecondary,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _confirmClearAll(AppProvider provider) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: AppColors.surface,
+        title: Text('Clear all?',
+            style: GoogleFonts.inter(color: AppColors.textPrimary)),
+        content: Text(
+          'This dismisses all detected transactions without saving them.',
+          style: GoogleFonts.inter(color: AppColors.textSecondary),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: Text('Cancel',
+                style: GoogleFonts.inter(color: AppColors.textSecondary)),
           ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: Text('Clear',
+                style: GoogleFonts.inter(
+                    color: AppColors.red, fontWeight: FontWeight.w600)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) await provider.clearReviewQueue();
+  }
+}
+
+/// A single pending transaction card with confirm / edit / reject.
+class _PendingCard extends StatefulWidget {
+  final Transaction transaction;
+  final List<String> categories;
+  final void Function(Transaction edited) onConfirm;
+  final VoidCallback onReject;
+
+  const _PendingCard({
+    super.key,
+    required this.transaction,
+    required this.categories,
+    required this.onConfirm,
+    required this.onReject,
+  });
+
+  @override
+  State<_PendingCard> createState() => _PendingCardState();
+}
+
+class _PendingCardState extends State<_PendingCard> {
+  late final TextEditingController _amountController;
+  late String _type;
+  late String _category;
+  bool _expanded = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final t = widget.transaction;
+    _amountController = TextEditingController(
+      text: t.amount.toStringAsFixed(
+          t.amount.truncateToDouble() == t.amount ? 0 : 2),
+    );
+    _type = t.type;
+    _category = widget.categories.contains(t.category) ? t.category : 'Other';
+  }
+
+  @override
+  void dispose() {
+    _amountController.dispose();
+    super.dispose();
+  }
+
+  bool get _isHighConfidence =>
+      TransactionClassifier.isHighConfidence(widget.transaction.confidence ?? 0);
+
+  void _confirm() {
+    final amount = double.tryParse(_amountController.text.trim());
+    if (amount == null || amount <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Enter a valid amount', style: GoogleFonts.inter()),
+          backgroundColor: AppColors.red,
+        ),
+      );
+      return;
+    }
+    widget.onConfirm(
+      widget.transaction.copyWith(
+        amount: amount,
+        type: _type,
+        category: _category,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = widget.transaction;
+    final isExpense = _type == 'expense';
+    final accent = isExpense ? AppColors.red : AppColors.green;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Summary row
+          Padding(
+            padding: const EdgeInsets.all(14),
+            child: Row(
               children: [
-                Text(
-                  '${_detected.length} UPI transaction${_detected.length != 1 ? 's' : ''} detected',
-                  style: GoogleFonts.inter(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.textPrimary,
+                Container(
+                  width: 42,
+                  height: 42,
+                  decoration: BoxDecoration(
+                    color: accent.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Icon(
+                    isExpense
+                        ? Icons.arrow_upward_rounded
+                        : Icons.arrow_downward_rounded,
+                    color: accent,
+                    size: 20,
                   ),
                 ),
-                const SizedBox(height: 2),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        t.displayLabel,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: GoogleFonts.inter(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.textPrimary,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Row(
+                        children: [
+                          Text(
+                            DateFormat('d MMM, h:mm a').format(t.timestamp),
+                            style: GoogleFonts.inter(
+                              fontSize: 12,
+                              color: AppColors.textSecondary,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          _confidenceBadge(),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
                 Text(
-                  'Tap to review and import to Khaata',
-                  style: GoogleFonts.inter(
-                    fontSize: 11,
-                    color: AppColors.textSecondary,
+                  '${isExpense ? '-' : '+'}₹${_amountController.text}',
+                  style: GoogleFonts.jetBrainsMono(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                    color: accent,
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          if (_expanded) _buildEditor(),
+
+          // Action bar
+          Container(
+            decoration: const BoxDecoration(
+              border: Border(top: BorderSide(color: AppColors.border)),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextButton.icon(
+                    onPressed: widget.onReject,
+                    icon: const Icon(Icons.close_rounded,
+                        size: 18, color: AppColors.textSecondary),
+                    label: Text('Reject',
+                        style: GoogleFonts.inter(color: AppColors.textSecondary)),
+                  ),
+                ),
+                Container(width: 1, height: 24, color: AppColors.border),
+                Expanded(
+                  child: TextButton.icon(
+                    onPressed: () => setState(() => _expanded = !_expanded),
+                    icon: Icon(_expanded ? Icons.check_rounded : Icons.edit_rounded,
+                        size: 18, color: AppColors.textSecondary),
+                    label: Text(_expanded ? 'Done' : 'Edit',
+                        style: GoogleFonts.inter(color: AppColors.textSecondary)),
+                  ),
+                ),
+                Container(width: 1, height: 24, color: AppColors.border),
+                Expanded(
+                  child: TextButton.icon(
+                    onPressed: _confirm,
+                    icon: const Icon(Icons.add_task_rounded,
+                        size: 18, color: AppColors.accent),
+                    label: Text('Add',
+                        style: GoogleFonts.inter(
+                          color: AppColors.accent,
+                          fontWeight: FontWeight.w600,
+                        )),
                   ),
                 ),
               ],
@@ -499,300 +561,126 @@ class _UpiImportScreenState extends State<UpiImportScreen> {
           ),
         ],
       ),
-    ).animate().fadeIn(duration: 400.ms);
+    );
   }
 
-  Widget _buildTransactionCard(int index) {
-    final result = _detected[index];
-    final isDebit = result.isDebit;
-    final color = isDebit ? AppColors.red : AppColors.green;
-    final isExpanded = _expandedIndex == index;
-
+  Widget _confidenceBadge() {
+    final high = _isHighConfidence;
     return Container(
-      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
       decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(
-          color: isExpanded ? color.withValues(alpha: 0.4) : AppColors.border,
+        color: (high ? AppColors.green : AppColors.yellow).withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Text(
+        high ? 'High match' : 'Check',
+        style: GoogleFonts.inter(
+          fontSize: 10,
+          fontWeight: FontWeight.w600,
+          color: high ? AppColors.green : AppColors.yellow,
         ),
       ),
-      child: Column(
-        children: [
-          // Summary row (always visible)
-          InkWell(
-            borderRadius: BorderRadius.circular(18),
-            onTap: () => _expandCard(index),
-            child: Padding(
-              padding: const EdgeInsets.all(14),
-              child: Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: color.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Icon(
-                      isDebit ? Icons.arrow_upward_rounded : Icons.arrow_downward_rounded,
-                      color: color,
-                      size: 20,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          isDebit ? 'Money Sent' : 'Money Received',
-                          style: GoogleFonts.inter(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w600,
-                            color: AppColors.textPrimary,
-                          ),
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          [
-                            if (result.vpa != null) result.vpa!,
-                            if (result.bankName != null) result.bankName!,
-                            if (result.date != null) DateFormat('d MMM').format(result.date!),
-                          ].join(' · '),
-                          style: GoogleFonts.inter(
-                            fontSize: 11,
-                            color: AppColors.textSecondary,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ],
-                    ),
-                  ),
-                  Text(
-                    '₹${result.amount.toStringAsFixed(result.amount.truncateToDouble() == result.amount ? 0 : 2)}',
-                    style: GoogleFonts.jetBrainsMono(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w700,
-                      color: color,
-                    ),
-                  ),
-                  const SizedBox(width: 4),
-                  Icon(
-                    isExpanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
-                    color: AppColors.textSecondary,
-                    size: 20,
-                  ),
-                ],
-              ),
-            ),
-          ),
-          // Expanded edit section
-          if (isExpanded) ...[
-            Divider(color: AppColors.border, height: 1),
-            _buildExpandedEdit(index, result),
-          ],
-        ],
-      ),
-    ).animate().fadeIn(duration: 300.ms, delay: (40 * (index % 10)).ms)
-        .slideX(begin: 0.05, duration: 300.ms, curve: Curves.easeOutCubic);
+    );
   }
 
-  Widget _buildExpandedEdit(int index, UpiParseResult result) {
+  Widget _buildEditor() {
     return Padding(
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Raw SMS
-          Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: AppColors.background,
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Text(
-              result.rawText,
-              style: GoogleFonts.jetBrainsMono(
-                fontSize: 10,
-                color: AppColors.textSecondary,
-                height: 1.4,
-              ),
-              maxLines: 3,
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-          const SizedBox(height: 12),
           // Type toggle
           Row(
             children: [
-              Expanded(child: _buildTypeChip(
-                label: 'Expense', icon: Icons.arrow_upward_rounded,
-                isSelected: _selectedType == 'expense', color: AppColors.red,
-                onTap: () => setState(() => _selectedType = 'expense'),
-              )),
-              const SizedBox(width: 10),
-              Expanded(child: _buildTypeChip(
-                label: 'Income', icon: Icons.arrow_downward_rounded,
-                isSelected: _selectedType == 'income', color: AppColors.green,
-                onTap: () => setState(() => _selectedType = 'income'),
-              )),
+              _typeChip('expense', 'Expense', AppColors.red),
+              const SizedBox(width: 8),
+              _typeChip('income', 'Income', AppColors.green),
             ],
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 12),
           // Amount
-          TextFormField(
+          TextField(
             controller: _amountController,
             keyboardType: const TextInputType.numberWithOptions(decimal: true),
-            style: GoogleFonts.jetBrainsMono(
-              fontSize: 20, fontWeight: FontWeight.bold, color: AppColors.textPrimary,
-            ),
+            style: GoogleFonts.jetBrainsMono(color: AppColors.textPrimary),
+            onChanged: (_) => setState(() {}),
             decoration: InputDecoration(
               prefixText: '₹ ',
-              prefixStyle: GoogleFonts.jetBrainsMono(
-                fontSize: 20, fontWeight: FontWeight.bold, color: AppColors.accent,
-              ),
-              filled: true, fillColor: AppColors.background,
+              prefixStyle: GoogleFonts.jetBrainsMono(color: AppColors.textSecondary),
+              filled: true,
+              fillColor: AppColors.background,
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
               border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(14), borderSide: BorderSide.none,
+                borderRadius: BorderRadius.circular(12),
+                borderSide: const BorderSide(color: AppColors.border),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: const BorderSide(color: AppColors.border),
               ),
             ),
           ),
-          const SizedBox(height: 10),
-          // Description
-          TextFormField(
-            controller: _descriptionController,
-            style: GoogleFonts.inter(color: AppColors.textPrimary, fontSize: 13),
-            decoration: InputDecoration(
-              hintText: 'Description',
-              hintStyle: GoogleFonts.inter(color: AppColors.textSecondary),
-              filled: true, fillColor: AppColors.background,
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(14), borderSide: BorderSide.none,
-              ),
-            ),
-          ),
-          const SizedBox(height: 10),
-          // Category
+          const SizedBox(height: 12),
+          // Category chips
           Wrap(
-            spacing: 6, runSpacing: 6,
-            children: _categories.map((cat) {
-              final isSelected = _selectedCategory == cat;
+            spacing: 8,
+            runSpacing: 8,
+            children: widget.categories.map((c) {
+              final selected = c == _category;
               return GestureDetector(
-                onTap: () => setState(() => _selectedCategory = cat),
+                onTap: () => setState(() => _category = c),
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
                   decoration: BoxDecoration(
-                    color: isSelected ? AppColors.accent : AppColors.background,
-                    borderRadius: BorderRadius.circular(16),
+                    color: selected
+                        ? AppColors.accent.withValues(alpha: 0.15)
+                        : AppColors.background,
+                    borderRadius: BorderRadius.circular(20),
                     border: Border.all(
-                      color: isSelected ? AppColors.accent : AppColors.border,
+                      color: selected ? AppColors.accent : AppColors.border,
                     ),
                   ),
                   child: Text(
-                    cat,
+                    c,
                     style: GoogleFonts.inter(
-                      fontSize: 11,
-                      fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
-                      color: isSelected ? Colors.white : AppColors.textSecondary,
+                      fontSize: 13,
+                      fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+                      color: selected ? AppColors.accent : AppColors.textSecondary,
                     ),
                   ),
                 ),
               );
             }).toList(),
           ),
-          const SizedBox(height: 14),
-          // Action buttons
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: () => _dismissTransaction(index),
-                  style: OutlinedButton.styleFrom(
-                    side: const BorderSide(color: AppColors.border),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                  ),
-                  icon: const Icon(Icons.close_rounded, color: AppColors.textSecondary, size: 18),
-                  label: Text(
-                    'Dismiss',
-                    style: GoogleFonts.inter(
-                      color: AppColors.textSecondary,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                flex: 2,
-                child: ElevatedButton.icon(
-                  onPressed: _isSaving ? null : () => _importTransaction(index),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.green,
-                    disabledBackgroundColor: AppColors.surface2,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                  ),
-                  icon: _isSaving
-                      ? const SizedBox(
-                          width: 16, height: 16,
-                          child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
-                        )
-                      : const Icon(Icons.download_rounded, color: Colors.white, size: 18),
-                  label: Text(
-                    _isSaving ? 'Importing...' : 'Import to Khaata',
-                    style: GoogleFonts.inter(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.white,
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
         ],
       ),
     );
   }
 
-  Widget _buildTypeChip({
-    required String label,
-    required IconData icon,
-    required bool isSelected,
-    required Color color,
-    required VoidCallback onTap,
-  }) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 10),
-        decoration: BoxDecoration(
-          color: isSelected ? color.withValues(alpha: 0.15) : AppColors.background,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: isSelected ? color : AppColors.border,
+  Widget _typeChip(String value, String label, Color color) {
+    final selected = _type == value;
+    return Expanded(
+      child: GestureDetector(
+        onTap: () => setState(() => _type = value),
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          decoration: BoxDecoration(
+            color: selected ? color.withValues(alpha: 0.15) : AppColors.background,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: selected ? color : AppColors.border),
           ),
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(icon, color: isSelected ? color : AppColors.textSecondary, size: 16),
-            const SizedBox(width: 6),
-            Text(
+          child: Center(
+            child: Text(
               label,
               style: GoogleFonts.inter(
                 fontSize: 13,
-                fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
-                color: isSelected ? color : AppColors.textSecondary,
+                fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+                color: selected ? color : AppColors.textSecondary,
               ),
             ),
-          ],
+          ),
         ),
       ),
     );
