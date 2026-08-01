@@ -36,10 +36,12 @@ jobs:
             exit 1
           fi
 
-          # Lightest possible DB operation: select a single column, one row.
-          # RLS may return an empty array — that's fine, the query still runs.
-          ENDPOINT="${SUPABASE_URL%/}/rest/v1/transactions?select=id&limit=1"
-          echo "Pinging: ${SUPABASE_URL%/}/rest/v1/transactions?select=id&limit=1"
+          # Hit the REST root — it always exists (returns the OpenAPI spec) and
+          # does not depend on any table or RLS policy. What matters for
+          # keep-alive is that the database/PostgREST actually serves the
+          # request, so we treat ANY genuine HTTP response as "project awake".
+          ENDPOINT="${SUPABASE_URL%/}/rest/v1/"
+          echo "Pinging: ${ENDPOINT}"
 
           HTTP_CODE=$(curl -sS \
             --retry 3 --retry-delay 5 --retry-all-errors \
@@ -56,10 +58,12 @@ jobs:
           cat /tmp/response.json || true
           echo ""
 
-          # PostgREST returns 200 (or 206 for partial content) on success.
-          if [ "${HTTP_CODE}" = "200" ] || [ "${HTTP_CODE}" = "206" ]; then
+          # Any 2xx/4xx means PostgREST served the request → the project is
+          # awake and this counts as activity. 000 (curl couldn't connect) or
+          # 5xx means the project is paused/unreachable — fail so we get alerted.
+          if [ "${HTTP_CODE}" -ge 200 ] && [ "${HTTP_CODE}" -lt 500 ]; then
             echo "::notice::Supabase keep-alive ping succeeded (HTTP ${HTTP_CODE})."
           else
-            echo "::error::Supabase keep-alive ping failed (HTTP ${HTTP_CODE})."
+            echo "::error::Supabase unreachable (HTTP ${HTTP_CODE}) — project may be PAUSED. Resume it once in the Supabase dashboard; daily pings keep it awake thereafter."
             exit 1
           fi
