@@ -36,34 +36,51 @@ jobs:
             exit 1
           fi
 
-          # Hit the REST root — it always exists (returns the OpenAPI spec) and
-          # does not depend on any table or RLS policy. What matters for
-          # keep-alive is that the database/PostgREST actually serves the
-          # request, so we treat ANY genuine HTTP response as "project awake".
           ENDPOINT="${SUPABASE_URL%/}/rest/v1/"
           echo "Pinging: ${ENDPOINT}"
 
-          HTTP_CODE=$(curl -sS \
-            --retry 3 --retry-delay 5 --retry-all-errors \
-            --max-time 30 \
-            -o /tmp/response.json \
-            -w "%{http_code}" \
-            -H "apikey: ${SUPABASE_ANON_KEY}" \
-            -H "Authorization: Bearer ${SUPABASE_ANON_KEY}" \
-            -H "Accept: application/json" \
-            "${ENDPOINT}")
+          # Try several times with backoff. A paused Supabase project has its
+          # DNS record removed, so early attempts may fail to resolve (curl exit
+          # 6) — we keep trying to ride out transient GitHub-runner DNS blips.
+          # IMPORTANT: capture curl's exit code WITHOUT letting `set -e` abort
+          # here, otherwise the friendly reporting below never runs.
+          HTTP_CODE="000"
+          CURL_RC=1
+          for attempt in 1 2 3 4 5; do
+            echo "Attempt ${attempt}..."
+            HTTP_CODE=$(curl -sS \
+              --max-time 30 \
+              -o /tmp/response.json \
+              -w "%{http_code}" \
+              -H "apikey: ${SUPABASE_ANON_KEY}" \
+              -H "Authorization: Bearer ${SUPABASE_ANON_KEY}" \
+              -H "Accept: application/json" \
+              "${ENDPOINT}") && CURL_RC=0 || CURL_RC=$?
 
-          echo "HTTP status: ${HTTP_CODE}"
-          echo "Response body:"
-          cat /tmp/response.json || true
-          echo ""
+            echo "  curl exit=${CURL_RC}, HTTP status=${HTTP_CODE}"
 
-          # Any 2xx/4xx means PostgREST served the request → the project is
-          # awake and this counts as activity. 000 (curl couldn't connect) or
-          # 5xx means the project is paused/unreachable — fail so we get alerted.
-          if [ "${HTTP_CODE}" -ge 200 ] && [ "${HTTP_CODE}" -lt 500 ]; then
-            echo "::notice::Supabase keep-alive ping succeeded (HTTP ${HTTP_CODE})."
+            # Any real HTTP response (2xx/3xx/4xx) means PostGREST served us →
+            # the project is awake and this counts as activity. Done.
+            if [ "${CURL_RC}" -eq 0 ] && [ "${HTTP_CODE}" -ge 200 ] && [ "${HTTP_CODE}" -lt 500 ]; then
+              echo "Response body:"; cat /tmp/response.json || true; echo ""
+              echo "::notice::Supabase keep-alive ping succeeded (HTTP ${HTTP_CODE})."
+              exit 0
+            fi
+
+            # Not yet — wait and retry (10s, 20s, 30s, 40s).
+            if [ "${attempt}" -lt 5 ]; then
+              sleep $(( attempt * 10 ))
+            fi
+          done
+
+          # All attempts failed. curl exit 6 = DNS could not resolve, which for
+          # Supabase almost always means the project is PAUSED (its DNS record
+          # is pulled while paused). A keep-alive ping CANNOT wake a paused
+          # project — you must resume it once in the Supabase dashboard, after
+          # which these daily pings keep it awake.
+          if [ "${CURL_RC}" -eq 6 ]; then
+            echo "::error::Supabase host did not resolve (curl 6) after retries — the project is almost certainly PAUSED. Resume it once at https://supabase.com/dashboard (Project → Resume); daily pings keep it awake thereafter."
           else
-            echo "::error::Supabase unreachable (HTTP ${HTTP_CODE}) — project may be PAUSED. Resume it once in the Supabase dashboard; daily pings keep it awake thereafter."
-            exit 1
+            echo "::error::Supabase unreachable (curl exit ${CURL_RC}, HTTP ${HTTP_CODE}) after retries — project may be paused or the SUPABASE_URL secret is wrong."
           fi
+          exit 1
