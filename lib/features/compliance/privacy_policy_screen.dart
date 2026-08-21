@@ -148,10 +148,14 @@ class PrivacyPolicyScreen extends StatelessWidget {
             _section(
               '9. Your Rights',
               'You control your data. You can delete individual entries, '
-              'clear all local data, revoke notification and SMS access, and '
-              'delete your account. Uninstalling the app removes on-device '
-              'data. To request account deletion or a data export, contact us '
-              'using the details below.',
+              'clear all local data, and revoke notification and SMS access '
+              'anytime. To delete your account, go to the settings icon on the '
+              'Home tab, then Account, then Delete my account — this '
+              'permanently removes your account, every saved transaction and '
+              'task, and all data on this device, with no way to recover it. '
+              'The same instructions are published at '
+              'https://hledger-ai-worker.guptahariom049.workers.dev/delete-account if you no longer have the app '
+              'installed. Uninstalling alone does not delete your account.',
             ),
             _section(
               '10. Children\'s Privacy',

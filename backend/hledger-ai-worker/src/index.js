@@ -42,6 +42,61 @@ const STATUS = {
   [Failure.malformed]: 502,
 };
 
+/** Public account-deletion instructions. Required by Google Play. */
+const DELETE_ACCOUNT_PAGE = `<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Delete your HLedger account</title>
+<style>
+:root{color-scheme:dark light}
+body{margin:0;padding:2.5rem 1.25rem;background:#0A0A0F;color:#fff;
+font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+main{max-width:38rem;margin:0 auto}
+h1{font-size:1.6rem;margin:0 0 .35rem}
+h2{font-size:1.1rem;margin:2rem 0 .5rem}
+p,li{color:#c9c9d4}
+a{color:#8B85FF}
+ol{padding-left:1.25rem}
+.card{background:#13131A;border:1px solid #1E1E2E;border-radius:14px;
+padding:1.1rem 1.25rem;margin:1.25rem 0}
+.muted{color:#8B8FA8;font-size:.9rem}
+</style></head><body><main>
+<h1>Delete your HLedger account</h1>
+<p class="muted">HLedger — <code>com.hariverse.hledger</code></p>
+
+<h2>Delete it yourself, in the app</h2>
+<div class="card"><ol>
+<li>Open HLedger and sign in.</li>
+<li>Tap the <strong>settings icon</strong> at the top right of the Home tab.</li>
+<li>Choose <strong>Account</strong>.</li>
+<li>Tap <strong>Delete my account</strong> and confirm.</li>
+</ol></div>
+<p>Deletion is immediate and permanent. No waiting period, and no way to
+recover the data afterwards.</p>
+
+<h2>If you no longer have the app</h2>
+<div class="card">
+<p>Email <a href="mailto:guptahariom049@gmail.com?subject=HLedger%20account%20deletion%20request">guptahariom049@gmail.com</a>
+from the address you signed up with, asking for your account to be deleted.
+Requests are actioned within 30 days.</p>
+</div>
+
+<h2>What gets deleted</h2>
+<ul>
+<li>Your account and sign-in credentials.</li>
+<li>Every transaction and task you saved, removed from the database entirely.</li>
+<li>All data held on your device, including transactions awaiting review and
+your chat history.</li>
+</ul>
+<p>Nothing is retained after deletion. HLedger keeps no backups of your entries
+and no analytics profile. Raw SMS and notification text were never uploaded in
+the first place — they are processed only on your device.</p>
+
+<h2>Privacy policy</h2>
+<p><a href="https://hledger-privacy-policy.guptahariom049.workers.dev/">Read the
+HLedger privacy policy</a>.</p>
+</main></body></html>`;
+
 function json(body, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
@@ -135,6 +190,19 @@ function buildMessages(body) {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+
+    // Google Play requires a publicly reachable account-deletion page, reachable
+    // without installing the app. Served here rather than as a separate service
+    // so there is one deployment to keep alive.
+    if (url.pathname === '/delete-account' || url.pathname === '/') {
+      return new Response(DELETE_ACCOUNT_PAGE, {
+        status: 200,
+        headers: {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Cache-Control': 'public, max-age=3600',
+        },
+      });
+    }
 
     if (url.pathname === '/health') {
       return json({

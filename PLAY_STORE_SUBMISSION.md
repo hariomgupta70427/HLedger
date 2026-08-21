@@ -4,7 +4,7 @@ Everything preparable from the repository side. Items marked **YOU** can only be
 done in Play Console or on a Google account.
 
 Package `com.hariverse.hledger` · versionName `1.0.0` · versionCode `1`
-minSdk 23 · compileSdk/targetSdk 36 (resolved from the Flutter SDK)
+minSdk 24 · compileSdk/targetSdk 36
 Artifact: `build/app/outputs/bundle/release/app-release.aab`
 
 ---
@@ -27,6 +27,7 @@ Verified against the **merged** manifest of the release build, not the source.
 | `WAKE_LOCK`, `FOREGROUND_SERVICE` | Normal | Injected by `flutter_local_notifications` / `another_telephony` | — |
 | `USE_BIOMETRIC`, `USE_FINGERPRINT` | Normal | Injected by Credential Manager (Google Sign-In) | — |
 | `READ_GSERVICES` | Signature | Injected by Firebase | — |
+| `…DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION` | Signature (own) | Self-scoped, injected by AndroidX for runtime-registered receivers | — |
 
 **Deliberately removed** — do not re-add without re-reading policy:
 
@@ -101,8 +102,13 @@ automatic bank-SMS capture as a headline feature, not a nice-to-have.
 - Chat history
 
 **Answers:** encrypted in transit — **Yes** (HTTPS throughout). Users can request
-deletion — **Yes**. Data collection optional — partly (detection sources and chat
-are optional; an account is not).
+deletion — **Yes**, and supply the URL from §4b; Play asks about in-app deletion
+separately, which HLedger also has. Data collection optional — partly (detection
+sources and chat are optional; an account is not).
+
+On-device storage is app-private (`MODE_PRIVATE`) but **not** separately
+encrypted by the app — it relies on Android's own full-disk encryption. Do not
+claim app-level encryption at rest anywhere in the listing.
 
 Do **not** declare Location. It was removed from the merged manifest.
 
@@ -116,6 +122,34 @@ The contact email is already filled in.
 
 **YOU:** enter that URL in Play Console → App content → Privacy policy, and
 confirm it loads in a private window with no login.
+
+## 4b. Account deletion — required by Play
+
+Google Play requires both an in-app deletion route and a publicly reachable web
+URL that works without installing the app. Both exist, and both have been
+tested on the final release build.
+
+**In-app:** settings icon (Home tab) → **Account** → **Delete my account**, behind
+a two-step confirmation. It deletes Firestore data first, then the auth record —
+that order matters, because deleting the account first would strand the user's
+financial data where nobody can read or erase it. Local data (pending detections,
+chat history, preferences) is wiped too.
+
+**Web URL to enter in Play Console → App content → Data deletion:**
+<https://hledger-ai-worker.guptahariom049.workers.dev/delete-account>
+
+Verified on the release build: the Account screen is reachable, deletion
+completes, and the Firebase auth record and Firestore documents are both gone
+afterwards. Subcollections are deleted in pages of 400 (the batch limit is 500),
+so a large ledger cannot silently leave documents behind.
+
+The Account screen also surfaces what was previously invisible: name, email,
+sign-in method, email-verified status and member-since date.
+
+**Known limitation, by design:** Firebase refuses to delete an account whose
+sign-in is not recent. When that happens the app reports it plainly and tells the
+user to sign in again — the server data is already gone at that point, and the
+message says so. It does not fail silently.
 
 ## 5. App access instructions
 
@@ -142,14 +176,36 @@ detection as core, content rating questionnaire, target audience, ads declaratio
 2. **File the SMS Permissions Declaration** (§2) — blocks publishing.
 3. Complete the **Data Safety** form (§3).
 4. Host the privacy policy and enter its URL (§4).
+4b. Enter the **data deletion URL** from §4b under App content → Data deletion.
 5. Provide **App access** credentials (§5).
 6. Content rating questionnaire.
 7. Store listing assets (§6).
 8. Confirm Play App Signing is enabled and keep `upload-keystore.jks` backed up
    somewhere safe — losing it means you cannot ship updates.
 
-## 8. Unverified
+## 8. Release verification
 
-`targetSdk` resolves from the installed Flutter SDK rather than a literal in
-`build.gradle.kts` (effective 36, which meets the current requirement). Confirm
-the value Play reports after upload.
+Measured against the artifacts that will be uploaded, not the source.
+
+| Check | Result |
+| --- | --- |
+| `flutter analyze` | No issues |
+| `flutter test` | 88 passing |
+| `targetSdkVersion` in merged manifest | **36** |
+| `minSdkVersion` in merged manifest | **24** (`maxOf(flutter.minSdkVersion, 23)`) |
+| `android:debuggable` in release manifest | absent |
+| Release signer | `CN=HLedger, OU=HariVerse` — upload keystore, not the debug key |
+| Provider keys in `libapp.so` (`gsk_`, `AIzaSy`, `sk-or-v1`) | 0 occurrences, all ABIs |
+| Account-deletion strings in the AAB's `libapp.so` | present |
+| Secrets in tracked files | none |
+
+**Signing scheme note.** The APK verifies under APK Signature Scheme v2 only, not
+v3. That is fine for upload — Play App Signing re-signs the artifact it
+distributes — so the upload key's scheme is not what reaches devices.
+
+**Build caveat that bit this project twice.** Gradle will happily reuse a stale
+Dart AOT snapshot, producing a build that succeeds while missing your newest
+code. A release build finishing suspiciously fast (well under a minute) is the
+tell. Confirm a new feature actually shipped by extracting `libapp.so` from the
+artifact and grepping it for a string that only the new code contains — a green
+build log is not evidence.

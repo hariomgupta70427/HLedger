@@ -27,6 +27,8 @@ Built with Flutter, Firebase, and a Cloudflare Worker for AI.
 - **Offline-first** — Firestore's local cache means entries save without a
   network and sync when one returns.
 - **Home screen widgets** for spend, tasks and quick notes.
+- **Account screen** — who you are signed in as, and one-tap permanent deletion
+  of the account and everything under it.
 
 ## Architecture
 
@@ -133,6 +135,12 @@ Notification reading is an **allowlist**, not a blocklist: messaging, social and
 mail apps are skipped without being opened. See
 [PRIVACY_POLICY.md](PRIVACY_POLICY.md).
 
+Deleting your account (**settings icon → Account → Delete my account**) removes
+the auth record, every synced transaction and task, and all on-device data. It is
+immediate and irreversible. The same instructions are published at
+<https://hledger-ai-worker.guptahariom049.workers.dev/delete-account> for anyone
+who no longer has the app installed.
+
 ## Development
 
 ```bash
@@ -168,4 +176,4 @@ hand.
 
 ## License
 
-No license has been chosen yet. Until one is added, all rights are reserved.
+[MIT](LICENSE) © 2026 Hariom Gupta

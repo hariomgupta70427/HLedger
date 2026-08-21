@@ -37,8 +37,8 @@ We read notifications from a fixed allowlist of banking, UPI and wallet apps
 only. Notifications from every other app on your device — messaging, email,
 social, health, everything else — are not opened and not stored; only the fact
 that an unrecognised app posted something is noted on-device for diagnostics.
-Captured alerts are held in encrypted app-private storage on your device until
-you review them, then deleted.
+Captured alerts are held in app-private storage on your device — readable only by
+HLedger, not by other apps — until you review them, then deleted.
 
 You can revoke this access anytime from your phone **Settings > Notification
 access**, or from the Review Inbox inside HLedger.
@@ -108,9 +108,19 @@ and sync), used solely to provide those features.
 ## 9. Your Rights
 
 You control your data. You can delete individual entries, clear all local data,
-revoke notification and SMS access, and delete your account. Uninstalling the app
-removes on-device data. To request account deletion or a data export, contact
-us using the details below.
+and revoke notification and SMS access at any time.
+
+**Deleting your account.** In the app: **settings icon → Account → Delete my
+account**. This immediately and permanently deletes your account, every
+transaction and task saved to the server, and all data held on this device. There
+is no waiting period and no way to recover it afterwards.
+
+If you no longer have the app installed, the same instructions are published at
+<https://hledger-ai-worker.guptahariom049.workers.dev/delete-account>, or email us using the address
+below. Requests are actioned within 30 days.
+
+Uninstalling the app removes on-device data but does not delete your account —
+use the option above for that.
 
 ## 10. Children's Privacy
 

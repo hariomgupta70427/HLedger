@@ -5,6 +5,8 @@ import 'package:google_sign_in/google_sign_in.dart';
 import 'package:google_sign_in_platform_interface/google_sign_in_platform_interface.dart'
     show GoogleSignInExceptionCode;
 
+import 'firestore_service.dart';
+
 /// A recoverable auth problem carrying a message that is safe to show the user
 /// as-is. [toString] is the message itself so it renders cleanly in a SnackBar.
 class AuthFailure implements Exception {
@@ -136,6 +138,68 @@ class AuthService {
   }
 
   // ── Session ──
+
+  /// How the current user signed in, for display on the account screen.
+  static String get signInMethod {
+    final providers = currentUser?.providerData.map((p) => p.providerId) ?? [];
+    if (providers.contains('google.com')) return 'Google';
+    if (providers.contains('password')) return 'Email and password';
+    return 'Unknown';
+  }
+
+  /// Whether the email address has been verified.
+  static bool get isEmailVerified => currentUser?.emailVerified ?? false;
+
+  /// When the account was created, if Firebase recorded it.
+  static DateTime? get createdAt => currentUser?.metadata.creationTime;
+
+  /// Permanently deletes the account and everything stored under it.
+  ///
+  /// Order matters: Firestore data is removed *before* the auth record, because
+  /// the security rules authorise those deletes by uid. Delete the account first
+  /// and the user's financial data is stranded, readable by nobody and erasable
+  /// by nobody.
+  ///
+  /// Firebase refuses to delete an account whose sign-in is not recent. That is
+  /// surfaced as an [AuthFailure] telling the user to sign in again, rather than
+  /// swallowed — a delete that silently does nothing is worse than one that
+  /// fails loudly.
+  static Future<void> deleteAccount() async {
+    final user = currentUser;
+    if (user == null) {
+      throw const AuthFailure('You are not signed in.');
+    }
+
+    try {
+      await FirestoreService.deleteAllUserData();
+    } catch (e) {
+      debugPrint('Account deletion — data removal failed: $e');
+      throw const AuthFailure(
+        'Could not delete your data from the server. Check your connection and '
+        'try again — your account has not been deleted.',
+      );
+    }
+
+    try {
+      await user.delete();
+    } on FirebaseAuthException catch (e) {
+      if (e.code == 'requires-recent-login') {
+        throw const AuthFailure(
+          'For your security, please sign out and sign in again, then delete '
+          'your account. Your stored data has already been removed.',
+        );
+      }
+      throw AuthFailure(_describe(e));
+    }
+
+    // Best effort: the account is already gone, so a failure here must not be
+    // reported as a failed deletion.
+    try {
+      await _google.signOut();
+    } catch (e) {
+      debugPrint('Google sign-out after deletion skipped: $e');
+    }
+  }
 
   static Future<void> signOut() async {
     // Clearing the Google session is best-effort: if it fails, signing out of

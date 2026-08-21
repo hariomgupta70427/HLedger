@@ -98,6 +98,40 @@ class FirestoreService {
 
   // ── Internals ──
 
+  /// Permanently deletes every document stored for the signed-in user.
+  ///
+  /// Awaited, unlike every other write in this class: the caller is about to
+  /// delete the auth record itself, and once that is gone the security rules
+  /// reject anything still in flight. Silent failure here would leave orphaned
+  /// financial data behind after the user asked for it to be erased.
+  ///
+  /// Deleted in pages because a Firestore batch is capped at 500 operations.
+  static Future<void> deleteAllUserData() async {
+    final uid = _requireUid();
+
+    for (final name in [
+      AppConstants.transactionsCollection,
+      AppConstants.tasksCollection,
+    ]) {
+      while (true) {
+        final page = await _collection(name).limit(400).get();
+        if (page.docs.isEmpty) break;
+
+        final batch = _db.batch();
+        for (final doc in page.docs) {
+          batch.delete(doc.reference);
+        }
+        await batch.commit();
+
+        if (page.docs.length < 400) break;
+      }
+    }
+
+    // The parent document may not exist — data lives in subcollections — but
+    // deleting it is harmless and removes any profile field written later.
+    await _db.collection(AppConstants.usersCollection).doc(uid).delete();
+  }
+
   static String _requireUid() {
     final uid = AuthService.currentUserId;
     if (uid == null) throw Exception('Not signed in');

@@ -10,6 +10,7 @@ import '../../services/firebase/auth_service.dart';
 import '../../shared/widgets/quick_actions.dart';
 import '../../shared/widgets/transaction_card.dart';
 import '../../main.dart';
+import '../account/account_screen.dart';
 import '../upi_import/upi_import_screen.dart';
 import '../analytics/analytics_category_colors.dart';
 import '../analytics/analytics_screen.dart';
@@ -160,6 +161,11 @@ class _HomeScreenState extends State<HomeScreen> {
             onSelected: (value) async {
               if (value == 'logout') {
                 await _confirmLogout(context);
+              } else if (value == 'account') {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const AccountScreen()),
+                );
               } else if (value == 'privacy') {
                 Navigator.push(
                   context,
@@ -168,6 +174,18 @@ class _HomeScreenState extends State<HomeScreen> {
               }
             },
             itemBuilder: (_) => [
+              PopupMenuItem(
+                value: 'account',
+                child: Row(
+                  children: [
+                    const Icon(Icons.person_rounded,
+                        color: AppColors.textSecondary, size: 20),
+                    const SizedBox(width: 10),
+                    Text('Account',
+                        style: GoogleFonts.inter(color: AppColors.textPrimary)),
+                  ],
+                ),
+              ),
               PopupMenuItem(
                 value: 'privacy',
                 child: Row(
