@@ -3,7 +3,11 @@
 .flutter-plugins
 .flutter-plugins-dependencies
 .packages
-pubspec.lock
+# pubspec.lock is deliberately NOT ignored. This is an application, not a
+# library: Dart's guidance is that apps commit the lock so every build resolves
+# identical versions. Ignoring it let CI resolve a different google_sign_in than
+# the one verified locally, which produced a lint failure that could not be
+# reproduced on a developer machine.
 build/
 coverage/
 *.app
