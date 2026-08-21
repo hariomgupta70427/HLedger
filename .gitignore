@@ -138,5 +138,13 @@ temp/
 
 # Generated Documentation
 doc/api/
+
+# Internal release strategy and risk notes — not for public consumption.
+# PRIVACY_POLICY.md is deliberately NOT ignored: Google Play requires a publicly
+# reachable privacy-policy URL, and this repo is where it gets hosted from.
 PLAY_STORE_COMPLIANCE.md
-PRIVACY_POLICY.md
+
+# Local build artifacts that must never be published
+*.apk
+*.aab
+*.aar

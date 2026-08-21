@@ -14,9 +14,16 @@
 -keep class com.google.android.gms.** { *; }
 -dontwarn com.google.android.gms.**
 
-# Keep Supabase
--keep class io.supabase.** { *; }
--dontwarn io.supabase.**
+# Keep Firebase (Auth + Firestore)
+-keep class com.google.firebase.** { *; }
+-dontwarn com.google.firebase.**
 
-# Keep notification classes
+# Keep notification classes (flutter_local_notifications, incl. boot + scheduled
+# receivers referenced by name in AndroidManifest.xml).
 -keep class com.dexterous.** { *; }
+
+# Keep another_telephony SMS plugin. The IncomingSmsReceiver is referenced by
+# name in AndroidManifest.xml and the plugin dispatches incoming SMS to a
+# background Dart isolate via reflection — R8 must not rename/remove these.
+-keep class com.shounakmulay.telephony.** { *; }
+-dontwarn com.shounakmulay.telephony.**

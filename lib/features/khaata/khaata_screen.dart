@@ -7,7 +7,7 @@ import '../../core/theme/app_theme.dart';
 import '../../core/utils/input_validator.dart';
 import '../../models/transaction.dart';
 import '../../providers/app_provider.dart';
-import '../../services/supabase_service.dart';
+import '../../services/firebase/auth_service.dart';
 import '../../shared/widgets/balance_summary.dart';
 import '../../shared/widgets/shimmer_skeleton.dart';
 import '../../shared/widgets/transaction_card.dart';
@@ -445,7 +445,7 @@ class KhaataScreenState extends State<KhaataScreen> {
   Future<void> _saveTransaction(BuildContext sheetContext) async {
     if (!_formKey.currentState!.validate()) return;
 
-    final userId = SupabaseService.currentUser?.id;
+    final userId = AuthService.currentUserId;
     if (userId == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -467,7 +467,7 @@ class KhaataScreenState extends State<KhaataScreen> {
       type: _selectedType,
       category: _selectedCategory,
       description: desc,
-      person: desc ?? '',  // Supabase NOT NULL — always provide
+      person: desc ?? '',
       timestamp: DateTime.now(),
     );
 

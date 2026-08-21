@@ -1,298 +1,171 @@
-<div align="center">
-
-<img src="assets/icons/hledger_icon.png" alt="HLedger Logo" width="100" height="100" style="border-radius: 22px"/>
-
 # HLedger
 
-**Track money and tasks — just by talking.**
+A personal finance and task app for India that fills in your ledger for you.
 
-[![Flutter](https://img.shields.io/badge/Flutter-3.x-54C5F8?logo=flutter&logoColor=white)](https://flutter.dev)
-[![Supabase](https://img.shields.io/badge/Supabase-Backend-3ECF8E?logo=supabase&logoColor=white)](https://supabase.com)
-[![OpenRouter](https://img.shields.io/badge/AI-OpenRouter-6C63FF)](https://openrouter.ai)
-[![License](https://img.shields.io/badge/License-MIT-00D68F)](LICENSE)
-[![Release](https://img.shields.io/github/v/release/hariomgupta70427/HLedger?color=FF4757)](https://github.com/hariomgupta70427/HLedger/releases)
+HLedger reads the transaction alerts your bank and payment apps already send —
+bank SMS and payment-app notifications — and turns them into ledger entries you
+confirm with one tap. You can also just talk to it: *"aaj 450 ka petrol daala"*
+becomes an expense, *"kal subah 8 baje gym"* becomes a reminder.
 
-[Download APK](https://github.com/hariomgupta70427/HLedger/releases/latest) · [Report Bug](https://github.com/hariomgupta70427/HLedger/issues) · [Request Feature](https://github.com/hariomgupta70427/HLedger/discussions)
-
-</div>
-
----
-
-## The idea
-
-Most finance apps make you fill forms. HLedger doesn't.
-
-You just talk to it — _"spent 200 on lunch"_, _"remind me to pay rent tomorrow"_ — and it figures out the rest. Entries go straight to your Khaata. Tasks show up with reminders. No dropdowns, no manual categorization, no friction.
-
-Built for people who want to track their money without thinking too hard about tracking their money.
-
----
-
-## What's inside
-
-```
-📊  Dashboard    — spending charts, weekly trends, quick stats
-📒  Khaata       — income/expense ledger, real-time sync
-💬  Chat         — AI assistant that actually does things
-✅  Tasks        — to-dos with reminders, even when app is closed
-```
-
----
-
-## Screenshots
-
-## Screenshots
-
-<p align="center">
-  <img src="assets/images/ss1.jpg" width="200" />
-  <img src="assets/images/ss2.jpg" width="200" />
-  <img src="assets/images/ss3.jpg" width="200" />
-  <img src="assets/images/ss4.jpg" width="200" />
-</p>
-
-<p align="center">
-  <b>Dashboard</b> &nbsp;&nbsp;&nbsp;&nbsp;
-  <b>Khaata</b> &nbsp;&nbsp;&nbsp;&nbsp;
-  <b>Chat</b> &nbsp;&nbsp;&nbsp;&nbsp;
-  <b>Tasks</b>
-</p>
+Built with Flutter, Firebase, and a Cloudflare Worker for AI.
 
 ---
 
 ## Features
 
-### Chat that works like WhatsApp
-Type naturally in Hindi, English, or Hinglish. The AI understands what you mean and acts on it — no confirmation dialogs, no extra steps.
+- **Automatic transaction detection** from bank SMS and payment-app
+  notifications (GPay, PhonePe, Paytm, Amazon Pay, BHIM, CRED, bank apps).
+  Nothing is saved until you confirm it.
+- **Review inbox** — every detection lands here first, with a confidence badge.
+- **Conversational entry** — Hinglish/Hindi/English chat that creates
+  transactions and reminders.
+- **Dashboard** — balance with income and expense shown separately, this
+  month's spend, a 7-day chart scaled to a fixed reference, category breakdown.
+- **Insights** — spending analytics by period and category.
+- **Tasks with reminders** — exact when Android permits it, approximate
+  otherwise, and it tells you which.
+- **Offline-first** — Firestore's local cache means entries save without a
+  network and sync when one returns.
+- **Home screen widgets** for spend, tasks and quick notes.
 
-```
-You:       spent 350 on groceries
-HLedger:   Done ✓ ₹350 groceries added.
+## Architecture
 
-You:       remind me to pay electricity bill friday
-HLedger:   Added 📝 Electricity bill — Friday.
-```
+| Layer | Choice |
+| --- | --- |
+| App | Flutter 3.35 / Dart 3.9, Provider for state |
+| Auth | Firebase Auth (email/password + Google via Credential Manager) |
+| Data | Cloud Firestore, per-user subcollections `users/{uid}/…` |
+| Detection (notifications) | Native Kotlin `NotificationListenerService` |
+| Detection (SMS) | `another_telephony` with a background isolate |
+| AI | Cloudflare Worker proxying Groq → Gemini |
+| Parsing | Pure-Dart regex parser, no ML, no network |
 
-### Khaata (Expense Ledger)
-- Income and expense tracking with category icons
-- Balance summary — this month or all time
-- Real-time updates when Chat adds an entry
-- Swipe left to delete
-- Pull to refresh
+Two design decisions worth knowing up front:
 
-### Tasks
-- Add via Chat or manually
-- Set due dates and reminders (fires even when app is closed)
-- Priority: Low / Medium / High
-- Filter: All / Active / Completed
-- Swipe right to complete, swipe left to delete
-- Overdue tasks show in red
+**Notification capture is native, not Dart.** Android keeps the listener service
+bound long after the Flutter engine is gone. A capture path living in Dart misses
+every alert that arrives while the app is closed — which is most of them. The
+Kotlin service writes each allowlisted alert straight to disk; Dart reads that
+queue when it next runs and confirms what it stored.
 
-### Dashboard
-- Good morning greeting (time-aware)
-- Weekly spending bar chart
-- Category breakdown
-- Quick stats: transactions, tasks done, pending, net balance
+**The app ships no AI keys.** Anything passed through `--dart-define` is
+compiled into the APK and extractable. Both provider keys live in Cloudflare
+Worker Secrets; the app authenticates to the Worker with the Firebase ID token it
+already holds.
 
-### Navigation
-- Instagram-style swipe between tabs
-- Floating pill bottom nav
+## Getting started
 
----
-
-## Tech Stack
-
-| Layer | What |
-|---|---|
-| Framework | Flutter 3.x (Dart) |
-| Backend | Supabase (PostgreSQL + Auth + Realtime) |
-| AI | OpenRouter — free tier, Llama 4 + Mistral |
-| State | Provider |
-| Notifications | flutter_local_notifications |
-| Animations | flutter_animate |
-| Local storage | SharedPreferences (chat history) |
-
----
-
-## Getting Started
-
-### Prerequisites
-
-- Flutter 3.x
-- Dart 3.x
-- A Supabase project
-- An OpenRouter API key (free at [openrouter.ai](https://openrouter.ai))
-
-### Setup
-
-**1. Clone the repo**
-```bash
-git clone https://github.com/hariomgupta70427/HLedger.git
-cd HLedger
-```
-
-**2. Install dependencies**
 ```bash
 flutter pub get
+cp lib/core/constants/app_constants.dart.example lib/core/constants/app_constants.dart
+cp dart_defines.example.json dart_defines.json
 ```
 
-**3. Set up environment**
-```bash
-cp .env.example .env
-```
+### 1. Firebase
 
-Fill in your values:
-```env
-SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_ANON_KEY=your-anon-key
-OPENROUTER_KEY=sk-or-your-key
-```
+See [FIREBASE_SETUP.md](FIREBASE_SETUP.md). In short: create a project, enable
+Email/Password + Google sign-in, create a Firestore database, then drop
+`google-services.json` into `android/app/`.
 
-**4. Set up Supabase**
+Two things that fail silently if skipped:
 
-Run the SQL in `SUPABASE_SETUP.md` in your Supabase SQL Editor.
-This creates the tables and Row Level Security policies.
+- **Register your SHA-1 fingerprints** (debug *and* release) in Firebase, then
+  re-download `google-services.json`. Without them Google Sign-In fails with
+  `ApiException: 10` while email/password keeps working.
+- **Deploy the security rules**: `firebase deploy --only firestore:rules`.
+  `firestore.rules` restricts every document to the account that created it.
 
-**5. Run**
-```bash
-flutter run --dart-define=SUPABASE_URL=xxx \
-            --dart-define=SUPABASE_ANON_KEY=xxx \
-            --dart-define=OPENROUTER_KEY=xxx
-```
+### 2. AI backend (optional)
 
-### Building a release APK
+Chat needs the Worker. Everything else works without it.
 
 ```bash
-flutter build apk --release \
-  --dart-define=SUPABASE_URL=your_url \
-  --dart-define=SUPABASE_ANON_KEY=your_key \
-  --dart-define=OPENROUTER_KEY=your_key
+cd backend/hledger-ai-worker
+npx wrangler kv namespace create RATE_LIMIT   # paste the id into wrangler.toml
+npx wrangler secret put GROQ_API_KEY
+npx wrangler secret put GEMINI_API_KEY        # optional fallback
+npx wrangler deploy
 ```
 
-Output: `build/app/outputs/flutter-apk/app-release.apk`
+Full notes in [backend/hledger-ai-worker/README.md](backend/hledger-ai-worker/README.md).
 
----
+### 3. Run
 
-## Project Structure
-
-```
-lib/
-├── main.dart                  # Entry point, auth routing
-├── screens/
-│   ├── dashboard_screen.dart  # Home tab with analytics
-│   ├── khaata_screen.dart     # Expense ledger
-│   ├── chat_screen.dart       # AI chat interface
-│   ├── tasks_screen.dart      # To-do list
-│   └── profile_screen.dart    # Settings, logout
-├── services/
-│   ├── supabase_service.dart  # All database operations
-│   ├── gemini_service.dart    # OpenRouter AI calls
-│   ├── notification_service.dart
-│   └── supabase_keep_alive.dart
-├── models/
-│   ├── transaction.dart
-│   └── task.dart
-├── widgets/
-│   ├── transaction_card.dart
-│   ├── shimmer_skeleton.dart
-│   ├── typing_indicator.dart
-│   └── balance_summary.dart
-├── utils/
-│   ├── app_theme.dart
-│   ├── app_constants.dart
-│   ├── retry_helper.dart
-│   └── input_validator.dart
-└── providers/
-    └── app_provider.dart
+```bash
+flutter run --dart-define-from-file=dart_defines.json
 ```
 
----
+`dart_defines.json` holds one value, `AI_PROXY_URL` — your Worker's public
+address. It is not a secret. **Never put an API key there.**
 
-## Database Schema
+## Building a release
 
-Two tables in Supabase:
+```bash
+flutter build appbundle --release \
+  --dart-define=AI_PROXY_URL=https://your-worker.workers.dev
+```
 
-**transactions**
-| Column | Type | Notes |
-|---|---|---|
-| id | uuid | Primary key, auto-generated |
-| user_id | uuid | References auth.users |
-| amount | numeric | |
-| type | text | `income` or `expense` |
-| category | text | Food, Transport, etc. |
-| description | text | |
-| created_at | timestamptz | Default: now() |
+Release signing reads `android/key.properties`, which points at your upload
+keystore. Neither is in this repo, and neither should be.
 
-**tasks**
-| Column | Type | Notes |
-|---|---|---|
-| id | uuid | Primary key, auto-generated |
-| user_id | uuid | References auth.users |
-| title | text | |
-| description | text | Nullable |
-| due_date | date | Nullable |
-| reminder_date_time | timestamptz | Nullable |
-| priority | text | `low`, `medium`, `high` |
-| is_completed | boolean | Default: false |
-| created_at | timestamptz | Default: now() |
+## Permissions
 
-Row Level Security is enabled on both tables — users can only access their own data.
+Both detection sources are optional, each behind a separate in-app disclosure
+shown before Android's own prompt. The app is fully usable with neither.
 
----
+| Permission | Why |
+| --- | --- |
+| `READ_SMS`, `RECEIVE_SMS` | Read transactional bank SMS. Never sent. Requires a Play Permissions Declaration. |
+| Notification access | Read alerts from an allowlist of payment/banking apps only. |
+| `POST_NOTIFICATIONS` | Task reminders and detection alerts. |
+| `SCHEDULE_EXACT_ALARM` | Reminders on the minute; degrades to approximate if denied. |
 
-## Supabase Free Tier
+`SEND_SMS` is not requested and never will be.
 
-Built to stay comfortably within Supabase's free limits, even with 30–50 users:
+## Privacy
 
-- Chat history is stored locally (SharedPreferences) — no database reads/writes
-- AI calls go through OpenRouter, not Supabase
-- Transactions and tasks are cached locally for 5 minutes
-- Keep-alive ping runs every 10 minutes (prevents project pausing)
-- Only CRUD operations hit Supabase
+Raw SMS and raw notification text **never leave the device**. Detections wait in
+app-private storage until you confirm them. What syncs to Firestore is the
+confirmed entry — amount, category, label, timestamp — under your own account.
+The only text that leaves the device is what you type into AI chat.
 
----
+Notification reading is an **allowlist**, not a blocklist: messaging, social and
+mail apps are skipped without being opened. See
+[PRIVACY_POLICY.md](PRIVACY_POLICY.md).
 
-## Security
+## Development
 
-- API keys are baked at build time via `--dart-define` — not in source code, not in `.env` committed to git
-- Row Level Security enforced at the database level
-- All user input is sanitized before being sent to the AI
-- HTTPS only — cleartext traffic is blocked in the Android network config
-- Release APK has code minification and obfuscation enabled
+```bash
+flutter analyze
+flutter test
+```
 
----
+The parser and classifier carry the bulk of the tests, because that is where a
+bug silently books wrong numbers into someone's ledger. `test/upi_parser_test.dart`
+and `test/notification_detection_test.dart` cover debits, credits, wallet
+top-ups, cashback, promotional offers, card and RuPay-over-UPI flows, duplicates
+and unsupported sources.
 
-## Roadmap
-
-- [ ] iOS support
-- [ ] Export to CSV / PDF
-- [ ] Recurring transactions
-- [ ] UPI transaction detection (auto-import)
-- [ ] Budget limits with alerts
-- [ ] Multi-currency support
-- [ ] Widget for home screen balance
-
----
+Detection accuracy is a moving target — banks reword alerts. If you hit a missed
+or misread transaction, a failing test case in those files is the most useful
+possible contribution.
 
 ## Contributing
 
-Issues and PRs are welcome. If you're planning something big, open a discussion first so we're on the same page.
+Issues and pull requests are welcome. For detection bugs please include the
+**alert wording** (with account numbers and amounts redacted) and the app it came
+from — that is what makes a fix reproducible.
 
-```bash
-git checkout -b feature/your-feature
-git commit -m "feat: describe your change"
-git push origin feature/your-feature
-```
+Do not include real API keys, keystores, or `google-services.json` in any issue
+or PR.
 
----
+## Notes
+
+Auto-detection is a convenience, not a system of record. Cash is undetectable,
+and some apps announce transactions in ways no parser can read. HLedger never
+books an entry without your confirmation, and anything missed can be added by
+hand.
 
 ## License
 
-MIT — do what you want, just don't remove the attribution.
-
----
-
-<div align="center">
-
-Built by [Hariom Gupta](https://hariomgupta.vercel.app) · New Delhi, India
-
-</div>
+No license has been chosen yet. Until one is added, all rights are reserved.

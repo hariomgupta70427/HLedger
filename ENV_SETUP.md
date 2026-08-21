@@ -1,193 +1,133 @@
-# 🔧 Environment Setup Guide
+# Environment Setup
 
-Complete guide for configuring all APIs and credentials for HLedger development and production.
+HLedger needs two things configured before it will run: **Firebase** (auth +
+data) and, optionally, the **Cloudflare Worker** that powers AI chat.
 
----
-
-## 📋 Required Accounts & Services
-
-| Service | Purpose | Sign Up |
-|---------|---------|---------|
-| **Supabase** | Backend, Auth, Database | [supabase.com](https://supabase.com) |
-| **OpenRouter** | AI Chat (Gemma 2 9B) | [openrouter.ai](https://openrouter.ai) |
-| *Optional: Google Cloud* | Native Google Sign-In | [console.cloud.google.com](https://console.cloud.google.com) |
+Neither involves putting an API key in the app. That is deliberate — anything
+compiled into an APK can be extracted from it.
 
 ---
 
-## 🔐 Step 1: Supabase Setup
+## What goes where
 
-### 1.1 Create Project
+| Secret | Lives in | In the APK? |
+| --- | --- | --- |
+| Firebase config | `android/app/google-services.json` | Yes — public by design, restricted by package name + SHA-1 |
+| Groq API key | Cloudflare Worker Secret | **No** |
+| Gemini API key | Cloudflare Worker Secret | **No** |
+| Upload keystore | `android/app/upload-keystore.jks` + `android/key.properties` | No |
 
-1. Go to [supabase.com](https://supabase.com) and sign in
-2. Click **New Project**
-3. Choose organization and enter project details
-4. Wait for project to initialize
+All four are gitignored. None of them belong in a commit, an issue, or a PR.
 
-### 1.2 Get API Credentials
-
-1. Go to **Project Settings** → **API**
-2. Copy these values:
-   - **Project URL**: `https://your-project-id.supabase.co`
-   - **anon public key**: `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...`
-
-### 1.3 Enable Google OAuth
-
-1. Go to **Authentication** → **Providers**
-2. Enable **Google**
-3. Enter your Google OAuth credentials:
-   - **Client ID**: From Google Cloud Console
-   - **Client Secret**: From Google Cloud Console
-
-### 1.4 Configure Redirect URLs
-
-> ⚠️ **CRITICAL for mobile login to work!**
-
-1. Go to **Authentication** → **URL Configuration**
-2. In **Redirect URLs**, add:
-   ```
-   io.supabase.hledger://login-callback
-   ```
-3. Click **Save**
+The only build-time value the app takes is `AI_PROXY_URL` — your Worker's public
+address, which is not a secret.
 
 ---
 
-## 🤖 Step 2: OpenRouter API Setup
-
-### 2.1 Get API Key
-
-1. Go to [openrouter.ai](https://openrouter.ai)
-2. Sign in with Google/GitHub
-3. Go to **Keys** → **Create Key**
-4. Copy the key: `sk-or-v1-...`
-
-### 2.2 Model Selection
-
-The app uses `google/gemma-2-9b-it:free` by default. You can change this in `app_constants.dart`:
-
-```dart
-static const String openRouterModel = 'google/gemma-2-9b-it:free';
-```
-
-**Available free models:**
-- `google/gemma-2-9b-it:free` (Recommended)
-- `meta-llama/llama-3.1-8b-instruct:free`
-- `mistralai/mistral-7b-instruct:free`
-
----
-
-## 📁 Step 3: Configure App
-
-### 3.1 Create Configuration File
+## 1. Copy the templates
 
 ```bash
 cp lib/core/constants/app_constants.dart.example lib/core/constants/app_constants.dart
+cp dart_defines.example.json dart_defines.json
 ```
 
-### 3.2 Fill in Credentials
+`dart_defines.json` holds exactly one entry:
 
-Edit `lib/core/constants/app_constants.dart`:
-
-```dart
-class AppConstants {
-  static const String appName = 'HLedger';
-  static const String tagline = 'Your Chat. Your Tasks. Your Transactions. Sorted.';
-  static const String splashSubtext = 'Smart Ledger for Smarter You';
-
-  // ==================== SUPABASE ====================
-  // Get from: Supabase Dashboard → Project Settings → API
-  static const String supabaseUrl = 'https://your-project.supabase.co';
-  static const String supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...';
-
-  // ==================== OPENROUTER API ====================
-  // Get from: https://openrouter.ai/keys
-  static const String openRouterApiUrl = 'https://openrouter.ai/api/v1/chat/completions';
-  static const String openRouterApiKey = 'sk-or-v1-your-key-here';
-  static const String openRouterModel = 'google/gemma-2-9b-it:free';
-
-  // ==================== DATABASE TABLES ====================
-  static const String usersTable = 'users';
-  static const String transactionsTable = 'transactions';
-  static const String tasksTable = 'tasks';
-
-  // ==================== NOTIFICATIONS ====================
-  static const String notificationChannelId = 'hledger_reminders';
-  static const String notificationChannelName = 'Task Reminders';
+```json
+{
+  "AI_PROXY_URL": "https://hledger-ai-worker.your-subdomain.workers.dev"
 }
 ```
 
----
+Leave it as `""` if you are not using AI chat — the app runs fine, and chat shows
+a clear "not configured" message instead of failing oddly.
 
-## 🔑 Step 4: Android Release Signing (Production Only)
+## 2. Firebase
 
-### 4.1 Generate Keystore
+Follow [FIREBASE_SETUP.md](FIREBASE_SETUP.md). The short version:
+
+1. Create a project, enable **Email/Password** and **Google** sign-in.
+2. Create a **Cloud Firestore** database (production mode). The region is
+   permanent — pick the one nearest your users.
+3. Add an Android app with package `com.hariverse.hledger`, download
+   `google-services.json` into `android/app/`.
+4. **Add your SHA-1 fingerprints** — debug *and* release — then **re-download**
+   `google-services.json`. The fingerprints are baked into that file.
+5. Deploy the rules: `firebase deploy --only firestore:rules`.
+
+Two failure modes worth recognising:
+
+- **Google Sign-In does nothing / `ApiException: 10`** — SHA-1 not registered, or
+  the JSON wasn't re-downloaded after adding it. Email/password will still work,
+  which makes this look like a UI bug rather than a config one.
+- **Everything saves but nothing appears in the console** — the Firestore
+  database was never created, or the rules reject the write. The app surfaces a
+  red error for a rejected write, so silence here means the write landed.
+
+## 3. Cloudflare Worker (optional — AI chat only)
 
 ```bash
-keytool -genkey -v -keystore android/app/upload-keystore.jks \
-  -storetype JKS -keyalg RSA -keysize 2048 -validity 10000 \
-  -alias upload
+cd backend/hledger-ai-worker
+npx wrangler login
+npx wrangler kv namespace create RATE_LIMIT   # paste the id into wrangler.toml
+npx wrangler secret put GROQ_API_KEY
+npx wrangler secret put GEMINI_API_KEY        # optional fallback provider
+npx wrangler deploy
 ```
 
-Enter a strong password when prompted.
+Confirm with `curl https://<your-worker>/health` — it reports whether each key is
+*present*, never its value.
 
-### 4.2 Create key.properties
+The Worker owns model selection, so there are no model names in the app to go
+stale. Groq retires model slugs on a published schedule; the Worker queries the
+live catalogue when the ones it knows stop resolving, and falls back to Gemini for
+rate limits, outages and timeouts.
 
-Create `android/key.properties`:
+Details, including how the Firebase ID token authenticates the app to the Worker:
+[backend/hledger-ai-worker/README.md](backend/hledger-ai-worker/README.md).
+
+## 4. Run
+
+```bash
+flutter pub get
+flutter run --dart-define-from-file=dart_defines.json
+```
+
+## 5. Release build
+
+```bash
+flutter build appbundle --release \
+  --dart-define=AI_PROXY_URL=https://your-worker.workers.dev
+```
+
+Signing reads `android/key.properties`:
 
 ```properties
-storePassword=YOUR_STORE_PASSWORD
-keyPassword=YOUR_KEY_PASSWORD
-keyAlias=upload
 storeFile=upload-keystore.jks
+storePassword=…
+keyAlias=upload
+keyPassword=…
 ```
 
-### 4.3 Backup Keystore
-
-> ⚠️ **CRITICAL: Store these securely!**
-
-Backup these files somewhere safe:
-- `android/app/upload-keystore.jks`
-- `android/key.properties`
-
-**If you lose the keystore, you cannot update your app on Google Play!**
+Back the keystore up somewhere safe. Losing it means you cannot ship updates to an
+already-published app.
 
 ---
 
-## ✅ Verification Checklist
+## Troubleshooting
 
-Before running the app, verify:
+**"AI chat is configured nahi hai is build mein"** — `AI_PROXY_URL` was empty at
+build time. Pass `--dart-define-from-file=dart_defines.json`.
 
-- [ ] `lib/core/constants/app_constants.dart` exists with real values
-- [ ] Supabase project is created with tables
-- [ ] Supabase redirect URL `io.supabase.hledger://login-callback` is added
-- [ ] Google OAuth is enabled in Supabase
-- [ ] OpenRouter API key is valid
-- [ ] (Production) Keystore and key.properties are configured
+**Chat returns a service error** — check `/health`. If a provider reads `false`,
+its secret was never set: `npx wrangler secret put GROQ_API_KEY`.
 
----
+**Chat says your session expired** — the Worker verifies a Firebase ID token, so
+you must be signed in. Sign out and back in.
 
-## 🚨 Security Reminders
+**Build fails with a missing `google-services.json`** — the google-services Gradle
+plugin hard-fails without it. See step 2.
 
-| File | Status | Note |
-|------|--------|------|
-| `lib/core/constants/app_constants.dart` | ❌ gitignored | Contains API keys |
-| `android/key.properties` | ❌ gitignored | Contains keystore passwords |
-| `android/app/upload-keystore.jks` | ❌ gitignored | Release signing key |
-| `google-services.json` | ❌ gitignored | Firebase config (if used) |
-
-**Never commit these files to Git!**
-
----
-
-## 🆘 Troubleshooting
-
-### "Google Sign-In redirects to localhost"
-→ Add `io.supabase.hledger://login-callback` to Supabase Redirect URLs
-
-### "User logged out after app close"
-→ Session persistence is automatic; ensure Supabase is properly initialized
-
-### "AI chat not responding"
-→ Check OpenRouter API key is valid and has credits
-
-### "Build fails with signing error"
-→ Verify `key.properties` path and keystore file exists
+**Detection finds nothing** — both sources are opt-in from the Review Inbox, and
+notification access has to be granted in Android Settings. Cash is never
+detectable, and some apps word alerts in ways the parser cannot read.

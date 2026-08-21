@@ -1,0 +1,24 @@
+name = "hledger-ai-worker"
+main = "src/index.js"
+compatibility_date = "2026-08-01"
+
+# ── NO SECRETS IN THIS FILE ──
+# GROQ_API_KEY and GEMINI_API_KEY are Worker Secrets, set with
+# `wrangler secret put`. Anything under [vars] is plaintext in the dashboard and
+# in this repo, so keys must never go there.
+[vars]
+FIREBASE_PROJECT_ID = "hledger-d3832"
+# Groq first because it is the verified-working provider; Gemini second because
+# its `-latest` aliases cannot be retired out from under us. Swap to
+# "gemini,groq" if Gemini proves more reliable in practice.
+PROVIDER_ORDER = "groq,gemini"
+RATE_MAX_PER_MINUTE = "12"
+RATE_MAX_PER_DAY = "300"
+
+# Per-user rate limiting. Create with:
+#   wrangler kv namespace create RATE_LIMIT
+# then paste the returned id below. Without this binding the Worker still runs,
+# but abuse protection is off and it logs a warning.
+[[kv_namespaces]]
+binding = "RATE_LIMIT"
+id = "f75f51f9e0b34cd3b037356886fec810"

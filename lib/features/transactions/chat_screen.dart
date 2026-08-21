@@ -10,7 +10,7 @@ import '../../models/task.dart';
 import '../../providers/app_provider.dart';
 import '../../services/chat_history_service.dart';
 import '../../services/notification_service.dart';
-import '../../services/supabase_service.dart';
+import '../../services/firebase/auth_service.dart';
 import '../../shared/widgets/typing_indicator.dart';
 
 /// A transient action the assistant has detected and is asking the user to
@@ -714,7 +714,7 @@ class _ChatScreenState extends State<ChatScreen> {
   void _handleAction(AIChatResponse response) {
     if (!mounted) return;
 
-    final userId = SupabaseService.currentUser?.id;
+    final userId = AuthService.currentUserId;
 
     if (response.action == 'ADD_TRANSACTION' && response.data != null) {
       if (userId == null) {
@@ -730,7 +730,7 @@ class _ChatScreenState extends State<ChatScreen> {
         type: data['type'] as String? ?? 'expense',
         category: data['category'] as String? ?? 'Other',
         description: description,
-        person: description ?? '', // Supabase NOT NULL — always provide
+        person: description ?? '',
         timestamp: DateTime.now(),
         source: TransactionSource.chat,
       );
@@ -805,14 +805,25 @@ class _ChatScreenState extends State<ChatScreen> {
         if (task.reminder &&
             task.reminderTime != null &&
             task.reminderTime!.isAfter(DateTime.now())) {
-          await NotificationService().scheduleTaskReminder(
-            id: saved.id.hashCode,
+          final precision = await NotificationService().scheduleTaskReminder(
+            id: saved.notificationId,
             title: '📝 Task Reminder',
             body: saved.title,
             scheduledDate: task.reminderTime!,
           );
-          ack = 'Set ✅ Reminder lag gaya — '
-              '${DateFormat('EEE, d MMM • h:mm a').format(task.reminderTime!)}.';
+          final stamp =
+              DateFormat('EEE, d MMM • h:mm a').format(task.reminderTime!);
+          // Only claim the reminder is set if it actually is, and only claim it
+          // is exact if Android allowed that.
+          ack = switch (precision) {
+            ReminderPrecision.exact => 'Set ✅ Reminder lag gaya — $stamp.',
+            ReminderPrecision.approximate =>
+              'Set ✅ Reminder lag gaya — $stamp ke aas-paas. Exact time ke liye '
+                  'Settings mein alarms allow karne padenge.',
+            ReminderPrecision.failed =>
+              'Task add ho gaya 📝 par reminder set nahi hua — notification '
+                  'permission check karo.',
+          };
         } else {
           ack = 'Added 📝 ${task.title}';
         }

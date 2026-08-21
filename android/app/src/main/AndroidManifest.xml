@@ -1,13 +1,44 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <!--
+      another_telephony declares ACCESS_COARSE_LOCATION for its cell-info APIs.
+      This app only ever calls listenIncomingSms, so the permission granted
+      nothing — while appearing in the merged manifest as a dangerous runtime
+      permission, contradicting the privacy policy's "we do not collect your
+      location", and dragging location into the Data Safety declaration.
+      Stripped at merge time rather than left to be explained away.
+    -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"
+        tools:node="remove" />
+
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <!-- SMS auto-detection of bank/UPI transactions. Read-only: we never send SMS. -->
+    <uses-permission android:name="android.permission.RECEIVE_SMS" />
+    <uses-permission android:name="android.permission.READ_SMS" />
+    <!--
+      Exact alarms for task reminders. SCHEDULE_EXACT_ALARM only: it is
+      user-grantable special access, and the app degrades to inexact scheduling
+      when it is denied (see NotificationService.scheduleTaskReminder).
+
+      USE_EXACT_ALARM is deliberately NOT declared. It grants exact alarms
+      without asking, but Google Play restricts it to apps whose core function is
+      an alarm clock, timer or calendar. HLedger is a ledger; reminders are a
+      secondary feature, so declaring it would be a policy violation even though
+      it would make reminders marginally more reliable.
+    -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
-    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
-    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <!--
+      USE_FULL_SCREEN_INTENT is deliberately NOT declared. Nothing in the app
+      calls setFullScreenIntent, so it granted nothing — while still being a
+      special-access permission that carries a Play Console declaration the app
+      could not honestly pass, since that pre-grant is limited to alarm-clock and
+      calling apps.
+    -->
 
     
     <application
@@ -29,14 +60,6 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
-            
-            <!-- Deep linking for Supabase Auth -->
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="io.supabase.hledger" android:host="login-callback" />
-            </intent-filter>
         </activity>
         
         <!-- Boot receiver for rescheduling notifications after device restart -->
@@ -49,10 +72,30 @@
             </intent-filter>
         </receiver>
         <receiver android:exported="false" android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationReceiver" />
-        
-        <!-- Notification Listener for UPI auto-detection -->
-        <service android:label="notifications"
-            android:name="notification.listener.service.NotificationListener"
+
+        <!-- SMS receiver for UPI/bank transaction auto-detection (another_telephony) -->
+        <receiver android:name="com.shounakmulay.telephony.sms.IncomingSmsReceiver"
+            android:permission="android.permission.BROADCAST_SMS"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.provider.Telephony.SMS_RECEIVED" />
+            </intent-filter>
+        </receiver>
+
+        <!--
+          Second detection source: payment-app notifications. A UPI payment made
+          inside GPay or PhonePe often produces no SMS at all, so without this
+          those transactions are invisible.
+
+          Implemented in-app rather than by a plugin because capture must NOT
+          depend on the Flutter engine being alive: the service writes each alert
+          straight to disk (see CaptureStore) and Dart reads the queue whenever it
+          next runs. Access is granted by the user in system settings, never by a
+          dialog, and only an allowlist of banking/UPI packages is ever read —
+          see TransactionSources.
+        -->
+        <service android:name=".detection.NotificationCaptureService"
+            android:label="HLedger transaction alerts"
             android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
             android:exported="true">
             <intent-filter>

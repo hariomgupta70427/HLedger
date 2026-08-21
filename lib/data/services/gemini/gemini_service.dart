@@ -1,6 +1,11 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
+
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+
 import '../../../core/constants/app_constants.dart';
 import '../../../core/utils/input_validator.dart';
 
@@ -25,229 +30,146 @@ class AIChatResponse {
   }
 }
 
-/// AI chat service using Groq (OpenAI-compatible API) with model fallback.
+/// AI chat client.
+///
+/// Holds no provider credentials. Model selection, provider fallback and both
+/// API keys live in the HLedger AI Worker — a key compiled into the APK is
+/// readable by anyone who decompiles it, and cannot be rotated out of an app
+/// that is already installed. See `backend/hledger-ai-worker/`.
 ///
 /// Keeps the filename as gemini_service.dart to avoid breaking imports.
 class GeminiService {
-  static const String _baseUrl = AppConstants.groqApiUrl;
+  static const Duration _timeout = Duration(seconds: 40);
 
-  static Map<String, String> get _headers => {
-    'Content-Type': 'application/json',
-    'Authorization': 'Bearer ${AppConstants.groqKey}',
-  };
-
-  static const String _systemPrompt = '''
-You are HLedger — a personal finance and task buddy.
-Talk like a close friend on WhatsApp. Casual, warm, short. Max 2 sentences in reply.
-
-Match user's language — Hindi, English, Hinglish. Use "yaar", "bhai" in Hinglish.
-
-RULES:
-1. ALWAYS respond with ONLY a single JSON object. No text before or after. No markdown.
-2. NEVER wrap JSON in code blocks or backticks.
-3. NEVER add explanations outside the JSON.
-4. When the user mentions money spent/received, or a task/reminder, the APP will ASK the user to confirm before saving. So your "reply" should ASK, not announce as done. Example: "₹200 Food add kar du? ✓" or "Reminder set kar du kal ke liye? 🔔".
-
-JSON FORMATS:
-
-Money spent/received → MUST include description. Reply must ASK for confirmation:
-{"action":"ADD_TRANSACTION","data":{"amount":200,"type":"expense","category":"Food","description":"chai"},"reply":"₹200 Food (chai) add kar du? ✓"}
-
-Task or reminder → include reminder_time when a time/day is implied. Reply must ASK:
-{"action":"ADD_TASK","data":{"title":"Doctor ke paas jana","due_date":"2026-07-19","reminder_time":"2026-07-19T10:00:00","priority":"medium"},"reply":"Reminder set kar du kal ke liye? 🔔"}
-
-Balance/spending query:
-{"action":"GET_BALANCE","reply":"Checking your Khaata..."}
-
-Normal chat (no action needed):
-{"action":"NONE","reply":"your reply here"}
-
-FIELD RULES:
-- action: MUST be one of ADD_TRANSACTION, ADD_TASK, GET_BALANCE, NONE
-- description: REQUIRED for transactions — short label like "chai", "petrol", "salary"
-- type: "income" or "expense" only
-- category: Food, Transport, Shopping, Bills, Entertainment, Health, Education, Work, Other
-- priority: "low", "medium", or "high"
-- due_date: "YYYY-MM-DD" or null. Resolve relative dates using TODAY given below.
-- reminder_time: "YYYY-MM-DDTHH:MM:SS" (local time) or null. Set it whenever the user implies a day/time ("kal", "subah", "shaam 5 baje", "next monday"). Default to 09:00 if only a day is given.
-- amount: number only, no currency symbols
-
-EXPENSE vs INCOME (Hinglish/Hindi cues):
-- expense: "diye", "diya", "paid", "gave", "spent", "kharch", "kharcha", "kharide", "kharida", "bought", "pi/khaya (chai/khana)", "bill", "recharge", "de diye", "cut gaye", "nikaale"
-- income: "mile", "mila", "received", "got", "earned", "aaye", "aaya", "salary aayi", "credit hua", "refund mila", "wapas mile"
-- If unclear but money left the user → expense.
-
-TASK / REMINDER cues:
-- "karna hai", "karni hai", "jana hai", "yaad dila", "remind", "reminder", "call karna", "meeting", "appointment", "bill bharna hai", "milna hai"
-
-RELATIVE DATES (resolve against TODAY):
-- "aaj" = today, "kal" = tomorrow, "parso" = day after tomorrow, "narso" = 3 days later
-- "agle/next <weekday>" = next occurrence of that weekday
-- "subah" = 09:00, "dopahar" = 13:00, "shaam" = 18:00, "raat" = 21:00
-''';
-
-  /// Send a message to AI with conversation history.
+  /// Sends a message and returns the parsed action.
   ///
   /// [history] should already contain all previous messages (user + assistant).
-  /// [userMessage] is the NEW user message to send (will NOT be added to history here).
+  /// [userMessage] is the NEW user message (it is not added to history here).
   ///
-  /// Returns parsed [AIChatResponse] with action and reply.
-  /// On all-model failure, returns a friendly fallback message.
+  /// Never throws: chat failure is a reply the user can read, not an exception
+  /// for the widget tree to handle.
   Future<AIChatResponse> sendMessage(
     List<Map<String, dynamic>> history,
     String userMessage,
   ) async {
+    if (!AppConstants.hasAiProxy) {
+      debugPrint('❌ AI_PROXY_URL not set for this build');
+      return const AIChatResponse(
+        action: 'NONE',
+        reply: 'AI chat is configured nahi hai is build mein. '
+            'Transaction ya task manually add kar lo.',
+      );
+    }
+
+    final token = await _idToken();
+    if (token == null) {
+      return const AIChatResponse(
+        action: 'NONE',
+        reply: 'AI chat ke liye sign in karna padega 🔑',
+      );
+    }
+
     final sanitized = InputValidator.sanitizeForAI(userMessage);
 
-    // Give the model today's date + weekday so it can resolve "kal", "next monday", etc.
+    // The device's own local time. The Worker runs in UTC at an arbitrary edge
+    // location, so it cannot resolve "kal" or "shaam" on its own.
     final now = DateTime.now();
-    const weekdays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
-    final dateContext =
-        'TODAY is ${now.toIso8601String().substring(0, 10)} (${weekdays[now.weekday - 1]}). '
-        'Current time is ${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}. '
-        'Resolve all relative dates/times against this.';
+    final stamp = '${now.year.toString().padLeft(4, '0')}-'
+        '${now.month.toString().padLeft(2, '0')}-'
+        '${now.day.toString().padLeft(2, '0')}T'
+        '${now.hour.toString().padLeft(2, '0')}:'
+        '${now.minute.toString().padLeft(2, '0')}';
 
-    // Build messages: system + last 10 history messages + current user message
-    final messages = <Map<String, dynamic>>[
-      {'role': 'system', 'content': '$_systemPrompt\n$dateContext'},
-      ...history.length > 10 ? history.sublist(history.length - 10) : history,
-      {'role': 'user', 'content': sanitized},
-    ];
-
-    // Try each model in order with delay between failures
-    for (int i = 0; i < AppConstants.groqModels.length; i++) {
-      final model = AppConstants.groqModels[i];
-      try {
-        debugPrint('🤖 Trying model: $model (${i + 1}/${AppConstants.groqModels.length})');
-        final result = await _callModel(model, messages);
-        if (result != null) {
-          debugPrint('✅ Got response from $model');
-          return result;
-        }
-        // Model returned null (rate limit, server error, etc.) — wait before next
-        if (i < AppConstants.groqModels.length - 1) {
-          final delay = Duration(seconds: 1 + i);
-          debugPrint('⏳ Waiting ${delay.inSeconds}s before trying next model...');
-          await Future.delayed(delay);
-        }
-      } catch (e) {
-        debugPrint('⚠️ Model $model failed with exception: $e');
-        if (i < AppConstants.groqModels.length - 1) {
-          await Future.delayed(Duration(seconds: 1 + i));
-        }
-        continue;
-      }
-    }
-
-    // All models failed — honest error message
-    debugPrint('❌ All ${AppConstants.groqModels.length} models failed');
-    return const AIChatResponse(
-      action: 'NONE',
-      reply: 'AI se connect nahi ho pa raha abhi 😔 Internet check karo aur retry karo.',
-    );
-  }
-
-  /// Call a specific model and parse the response.
-  /// Returns null if the model fails or returns empty.
-  Future<AIChatResponse?> _callModel(
-    String model,
-    List<Map<String, dynamic>> messages,
-  ) async {
     try {
-      debugPrint('📡 Calling $model...');
       final response = await http
           .post(
-            Uri.parse(_baseUrl),
-            headers: _headers,
+            Uri.parse('${AppConstants.aiProxyUrl}/chat'),
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer $token',
+            },
             body: jsonEncode({
-              'model': model,
-              'messages': messages,
-              'temperature': 0.7,
-              'max_tokens': 250,
-              // Groq native JSON mode — guarantees the reply is a valid JSON
-              // object, so we never depend on markdown-stripping heuristics.
-              'response_format': {'type': 'json_object'},
+              'message': sanitized,
+              'history': history
+                  .where((m) => m['role'] == 'user' || m['role'] == 'assistant')
+                  .map((m) => {
+                        'role': m['role'],
+                        'content': m['content']?.toString() ?? '',
+                      })
+                  .toList(),
+              'now': stamp,
             }),
           )
-          .timeout(const Duration(seconds: 30));
+          .timeout(_timeout);
 
-      debugPrint('📨 Response from $model: status=${response.statusCode}');
-
-      // Model not found — skip immediately
-      if (response.statusCode == 404) {
-        debugPrint('❌ Model $model not found (404) — skipping');
-        return null;
-      }
-
-      // Rate limited — try next model
-      if (response.statusCode == 429) {
-        debugPrint('⚠️ Rate limited on model $model');
-        return null;
-      }
-
-      // Server error — try next model
-      if (response.statusCode >= 500) {
-        debugPrint('⚠️ Server error ${response.statusCode} on model $model');
-        return null;
-      }
-
-      // Auth error — API key issue
-      if (response.statusCode == 401) {
-        debugPrint('❌ Groq auth failed — check API key');
-        return null;
-      }
-
-      if (response.statusCode != 200) {
-        debugPrint('⚠️ Unexpected status ${response.statusCode} from $model');
-        return null;
-      }
-
-      final data = jsonDecode(response.body);
-      final content = data['choices']?[0]?['message']?['content'] as String?;
-      if (content == null || content.isEmpty) return null;
-
-      // Try to parse as JSON — handle various edge cases
-      try {
-        String jsonText = content.trim();
-
-        // Remove markdown code blocks if present
-        if (jsonText.startsWith('```json')) {
-          jsonText = jsonText.substring(7);
-        } else if (jsonText.startsWith('```')) {
-          jsonText = jsonText.substring(3);
+      if (response.statusCode == 200) {
+        final body = jsonDecode(response.body) as Map<String, dynamic>;
+        debugPrint('✅ AI reply via ${body['provider']}/${body['model']}');
+        final parsed = AIChatResponse.fromJson(body);
+        if (parsed.reply.isEmpty) {
+          return const AIChatResponse(
+            action: 'NONE',
+            reply: 'AI ka jawab poora nahi aaya 🤔 Ek baar dobara bolo?',
+          );
         }
-        if (jsonText.endsWith('```')) {
-          jsonText = jsonText.substring(0, jsonText.length - 3);
-        }
-        jsonText = jsonText.trim();
-
-        // Try to extract JSON object if there's text before/after it
-        if (!jsonText.startsWith('{')) {
-          final startIdx = jsonText.indexOf('{');
-          final endIdx = jsonText.lastIndexOf('}');
-          if (startIdx != -1 && endIdx != -1 && endIdx > startIdx) {
-            jsonText = jsonText.substring(startIdx, endIdx + 1);
-          }
-        }
-
-        final parsed = jsonDecode(jsonText) as Map<String, dynamic>;
-        
-        // Validate action field
-        final action = parsed['action'] as String? ?? 'NONE';
-        if (!['ADD_TRANSACTION', 'ADD_TASK', 'GET_BALANCE', 'NONE'].contains(action)) {
-          parsed['action'] = 'NONE';
-        }
-        
-        return AIChatResponse.fromJson(parsed);
-      } catch (e) {
-        debugPrint('⚠️ JSON parse failed for model $model: $e');
-        // If JSON parsing fails, treat the raw text as a plain reply
-        return AIChatResponse(action: 'NONE', reply: content.trim());
+        return parsed;
       }
+
+      // The Worker sends a user-safe sentence with every error, and never
+      // forwards provider text — which could otherwise leak configuration.
+      return AIChatResponse(action: 'NONE', reply: _explain(response));
+    } on TimeoutException {
+      debugPrint('⏱️ AI proxy timed out');
+      return const AIChatResponse(
+        action: 'NONE',
+        reply: 'AI ne jawab dene mein bahut time laga ⏱️ Dobara try karo.',
+      );
+    } on SocketException {
+      return const AIChatResponse(
+        action: 'NONE',
+        reply: 'Internet nahi mil raha 📴 Connection check karke retry karo.',
+      );
+    } on http.ClientException catch (e) {
+      debugPrint('📴 AI proxy network error: $e');
+      return const AIChatResponse(
+        action: 'NONE',
+        reply: 'Internet nahi mil raha 📴 Connection check karke retry karo.',
+      );
     } catch (e) {
-      debugPrint('❌ Model $model error: $e');
+      debugPrint('❌ AI proxy error: $e');
+      return const AIChatResponse(
+        action: 'NONE',
+        reply: 'AI se baat nahi ho payi 😔 Thodi der baad try karo.',
+      );
+    }
+  }
+
+  /// A fresh Firebase ID token, which is what the Worker authenticates against.
+  Future<String?> _idToken() async {
+    try {
+      return await FirebaseAuth.instance.currentUser?.getIdToken();
+    } catch (e) {
+      debugPrint('❌ Could not get ID token: $e');
       return null;
     }
+  }
+
+  String _explain(http.Response response) {
+    debugPrint('📨 AI proxy ${response.statusCode}');
+    try {
+      final body = jsonDecode(response.body) as Map<String, dynamic>;
+      final message = body['message'] as String?;
+      if (message != null && message.isNotEmpty) return message;
+    } catch (_) {
+      // Fall through to a status-based message.
+    }
+    if (response.statusCode == 401) {
+      return 'Session expire ho gayi 🔑 Dobara sign in karo.';
+    }
+    if (response.statusCode == 429) {
+      return 'AI abhi busy hai 😅 Ek minute baad dobara bolo.';
+    }
+    return 'AI service down hai abhi 🛠️ Thodi der baad try karo.';
   }
 
   // ── Legacy compatibility ──

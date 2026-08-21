@@ -9,7 +9,7 @@ import '../../core/utils/input_validator.dart';
 import '../../models/task.dart';
 import '../../providers/app_provider.dart';
 import '../../services/notification_service.dart';
-import '../../services/supabase_service.dart';
+import '../../services/firebase/auth_service.dart';
 import '../../shared/widgets/shimmer_skeleton.dart';
 
 class TasksScreen extends StatefulWidget {
@@ -131,26 +131,26 @@ class TasksScreenState extends State<TasksScreen> {
                             startActionPane: ActionPane(
                               motion: const BehindMotion(),
                               children: [
-                                SlidableAction(
-                                  onPressed: (_) => _toggleTask(provider, task),
-                                  backgroundColor: task.completed ? AppColors.yellow : AppColors.green,
-                                  foregroundColor: Colors.white,
-                                  icon: task.completed ? Icons.undo_rounded : Icons.check_rounded,
+                                _swipeAction(
+                                  icon: task.completed
+                                      ? Icons.undo_rounded
+                                      : Icons.check_rounded,
                                   label: task.completed ? 'Undo' : 'Done',
-                                  borderRadius: BorderRadius.circular(12),
+                                  color: task.completed
+                                      ? AppColors.yellow
+                                      : AppColors.green,
+                                  onPressed: () => _toggleTask(provider, task),
                                 ),
                               ],
                             ),
                             endActionPane: ActionPane(
                               motion: const BehindMotion(),
                               children: [
-                                SlidableAction(
-                                  onPressed: (_) => _deleteTask(provider, task),
-                                  backgroundColor: AppColors.red,
-                                  foregroundColor: Colors.white,
+                                _swipeAction(
                                   icon: Icons.delete_rounded,
                                   label: 'Delete',
-                                  borderRadius: BorderRadius.circular(12),
+                                  color: AppColors.red,
+                                  onPressed: () => _deleteTask(provider, task),
                                 ),
                               ],
                             ),
@@ -171,6 +171,50 @@ class TasksScreenState extends State<TasksScreen> {
               ),
             );
           },
+        ),
+      ),
+    );
+  }
+
+  /// A swipe action that fits whatever height the row happens to be.
+  ///
+  /// `SlidableAction` lays its icon and label out at fixed sizes with fixed
+  /// padding, so on a short row — one with no reminder and no due date — the
+  /// label was clipped mid-word. Scaling the content instead means it fits any
+  /// row, and both panes stay identical.
+  Widget _swipeAction({
+    required IconData icon,
+    required String label,
+    required Color color,
+    required VoidCallback onPressed,
+  }) {
+    return CustomSlidableAction(
+      onPressed: (_) => onPressed(),
+      backgroundColor: color,
+      foregroundColor: Colors.white,
+      borderRadius: BorderRadius.circular(12),
+      padding: EdgeInsets.zero,
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, size: 20, color: Colors.white),
+              const SizedBox(height: 4),
+              Text(
+                label,
+                maxLines: 1,
+                style: GoogleFonts.inter(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.white,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -198,7 +242,7 @@ class TasksScreenState extends State<TasksScreen> {
   Future<void> _deleteTask(AppProvider provider, Task task) async {
     try {
       // Cancel any scheduled notification
-      await NotificationService().cancelNotification(task.id.hashCode);
+      await NotificationService().cancelNotification(task.notificationId);
       await provider.deleteTask(task.id);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -242,8 +286,8 @@ class TasksScreenState extends State<TasksScreen> {
     final reminderDateTime = DateTime(date.year, date.month, date.day, time.hour, time.minute);
 
     // Schedule notification
-    await NotificationService().scheduleTaskReminder(
-      id: task.id.hashCode,
+    final scheduled = await NotificationService().scheduleTaskReminder(
+      id: task.notificationId,
       title: '📝 Task Reminder',
       body: task.title,
       scheduledDate: reminderDateTime,
@@ -256,17 +300,76 @@ class TasksScreenState extends State<TasksScreen> {
     );
     await provider.updateTask(updated);
 
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Reminder set for ${DateFormat('d MMM, h:mm a').format(reminderDateTime)} ⏰',
-            style: GoogleFonts.inter(),
+    if (mounted) _reportReminder(scheduled, reminderDateTime);
+  }
+
+  /// Says what actually happened.
+  ///
+  /// Every call site used to announce "Reminder set" unconditionally while
+  /// discarding the result, so a reminder that was silently skipped — for a time
+  /// already past, or a denied alarm permission — looked identical to one that
+  /// was armed. That is why a reminder scheduled for the wrong day went
+  /// unnoticed. An approximate reminder is also reported as approximate, with a
+  /// one-tap route to make it exact.
+  void _reportReminder(ReminderPrecision precision, DateTime when) {
+    final stamp = DateFormat('EEE, d MMM • h:mm a').format(when);
+
+    switch (precision) {
+      case ReminderPrecision.exact:
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Reminder set for $stamp', style: GoogleFonts.inter()),
+            backgroundColor: AppColors.surface2,
           ),
-          backgroundColor: AppColors.surface2,
-        ),
-      );
+        );
+      case ReminderPrecision.approximate:
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Reminder set for around $stamp. Android may run it a few '
+              'minutes late unless exact alarms are allowed.',
+              style: GoogleFonts.inter(),
+            ),
+            backgroundColor: AppColors.surface2,
+            duration: const Duration(seconds: 8),
+            action: SnackBarAction(
+              label: 'Allow',
+              textColor: AppColors.accent,
+              onPressed: NotificationService().requestExactReminders,
+            ),
+          ),
+        );
+      case ReminderPrecision.failed:
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Could not set the reminder. Check notification permissions '
+              'for HLedger.',
+              style: GoogleFonts.inter(),
+            ),
+            backgroundColor: AppColors.red,
+            duration: const Duration(seconds: 6),
+          ),
+        );
     }
+  }
+
+  /// Resolves the day a reminder should fire on.
+  ///
+  /// The add-task sheet asks only for a *time*, so the date has to come from
+  /// somewhere. It used to be `dueDate ?? tomorrow`, which silently pushed every
+  /// reminder on a task with no due date a full day out — ask for 16:48 today,
+  /// get 16:48 tomorrow — while the UI reported success either way. Now the
+  /// fallback is today, rolling forward only if that time has already passed.
+  static DateTime? _resolveReminder(DateTime? dueDate, TimeOfDay? time) {
+    if (time == null) return null;
+    final base = dueDate ?? DateTime.now();
+    final candidate =
+        DateTime(base.year, base.month, base.day, time.hour, time.minute);
+    if (dueDate == null && !candidate.isAfter(DateTime.now())) {
+      return candidate.add(const Duration(days: 1));
+    }
+    return candidate;
   }
 
   void _showAddTaskSheet() {
@@ -453,7 +556,9 @@ class TasksScreenState extends State<TasksScreen> {
                             Expanded(
                               child: Text(
                                 setReminder && reminderTime != null
-                                    ? 'Reminder at ${reminderTime!.format(context)}'
+                                    // The resolved day, not just the time — the
+                                    // day is the part that used to be wrong.
+                                    ? 'Reminder ${DateFormat('EEE, d MMM • h:mm a').format(_resolveReminder(dueDate, reminderTime)!)}'
                                     : 'Set Reminder',
                                 style: GoogleFonts.inter(
                                   color: setReminder ? AppColors.textPrimary : AppColors.textSecondary,
@@ -545,7 +650,7 @@ class TasksScreenState extends State<TasksScreen> {
   }) async {
     if (!formKey.currentState!.validate()) return;
 
-    final userId = SupabaseService.currentUser?.id;
+    final userId = AuthService.currentUserId;
     if (userId == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -557,17 +662,8 @@ class TasksScreenState extends State<TasksScreen> {
     }
 
     // Build reminder datetime
-    DateTime? reminderDateTime;
-    if (setReminder && reminderTime != null) {
-      final dateForReminder = dueDate ?? DateTime.now().add(const Duration(days: 1));
-      reminderDateTime = DateTime(
-        dateForReminder.year,
-        dateForReminder.month,
-        dateForReminder.day,
-        reminderTime.hour,
-        reminderTime.minute,
-      );
-    }
+    final reminderDateTime =
+        setReminder ? _resolveReminder(dueDate, reminderTime) : null;
 
     final task = Task(
       id: '',
@@ -588,22 +684,21 @@ class TasksScreenState extends State<TasksScreen> {
       final savedTask = await provider.addTask(task);
 
       // Schedule notification if reminder is set
-      if (setReminder && reminderDateTime != null) {
-        await NotificationService().scheduleTaskReminder(
-          id: savedTask.id.hashCode,
+      if (reminderDateTime != null) {
+        final scheduled = await NotificationService().scheduleTaskReminder(
+          id: savedTask.notificationId,
           title: '📝 Task Reminder',
           body: savedTask.title,
           scheduledDate: reminderDateTime,
         );
+        if (mounted) _reportReminder(scheduled, reminderDateTime);
+        return;
       }
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(
-              setReminder ? 'Task added with reminder ⏰' : 'Task added ✅',
-              style: GoogleFonts.inter(),
-            ),
+            content: Text('Task added ✅', style: GoogleFonts.inter()),
             backgroundColor: AppColors.surface2,
           ),
         );

@@ -1,0 +1,12 @@
+rules_version = '2';
+
+// HLedger keeps each user's ledger under users/{uid}. Every document lives
+// inside that subtree, so a single uid comparison covers reads and writes for
+// transactions, tasks, and anything added later.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /users/{userId}/{document=**} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+  }
+}

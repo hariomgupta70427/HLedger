@@ -7,7 +7,7 @@ import '../models/transaction.dart';
 ///
 /// Privacy by design: detected transactions live ONLY on the user's device
 /// (SharedPreferences) until they explicitly confirm one. Nothing is sent to
-/// Supabase or any server while pending. On confirm, the entry is inserted as
+/// Firestore or any server while pending. On confirm, the entry is inserted as
 /// a normal transaction; on reject, it's simply dropped.
 class PendingTransactionStore {
   PendingTransactionStore._();

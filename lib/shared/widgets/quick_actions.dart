@@ -7,7 +7,7 @@ import '../../core/utils/input_validator.dart';
 import '../../models/task.dart';
 import '../../models/transaction.dart';
 import '../../providers/app_provider.dart';
-import '../../services/supabase_service.dart';
+import '../../services/firebase/auth_service.dart';
 
 /// Quick action cards row displayed on the dashboard.
 ///
@@ -312,7 +312,7 @@ class QuickActionsRow extends StatelessWidget {
   }) async {
     if (!formKey.currentState!.validate()) return;
 
-    final userId = SupabaseService.currentUser?.id;
+    final userId = AuthService.currentUserId;
     if (userId == null) return;
 
     final desc = noteCtrl.text.trim().isEmpty ? null : noteCtrl.text.trim();
@@ -596,7 +596,7 @@ class QuickActionsRow extends StatelessWidget {
   }) async {
     if (!formKey.currentState!.validate()) return;
 
-    final userId = SupabaseService.currentUser?.id;
+    final userId = AuthService.currentUserId;
     if (userId == null) return;
 
     final task = Task(
@@ -764,7 +764,7 @@ class QuickActionsRow extends StatelessWidget {
   ) async {
     if (!formKey.currentState!.validate()) return;
 
-    final userId = SupabaseService.currentUser?.id;
+    final userId = AuthService.currentUserId;
     if (userId == null) return;
 
     // Quick Note = Task with no due date, priority low

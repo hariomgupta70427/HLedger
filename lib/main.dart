@@ -1,3 +1,5 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_animate/flutter_animate.dart';
@@ -7,11 +9,10 @@ import 'core/constants/app_constants.dart';
 import 'core/theme/app_theme.dart';
 import 'features/dashboard/dashboard_screen.dart';
 import 'providers/app_provider.dart';
+import 'services/firebase/auth_service.dart';
 import 'services/home_widget_service.dart';
 import 'services/notification_service.dart';
 import 'services/sms_transaction_service.dart';
-import 'services/supabase_keep_alive.dart';
-import 'services/supabase_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -22,18 +23,25 @@ void main() async {
     systemNavigationBarColor: AppColors.background,
   ));
 
-  if (!AppConstants.hasRequiredSecrets) {
+  if (!AppConstants.hasAiProxy) {
     debugPrint(
-      '⚠️ Missing SUPABASE_URL / SUPABASE_ANON_KEY. '
-      'Run with --dart-define-from-file=dart_defines.json '
-      '(copy dart_defines.example.json first).',
+      '⚠️ Missing AI_PROXY_URL — AI chat will not work. Deploy the worker in '
+      'backend/hledger-ai-worker and build with '
+      '--dart-define=AI_PROXY_URL=https://... (see its README).',
     );
   }
 
   try {
-    await SupabaseService.initialize();
+    await Firebase.initializeApp();
+    FirebaseFirestore.instance.settings = const Settings(
+      persistenceEnabled: true,
+      cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED,
+    );
   } catch (e) {
-    debugPrint('Supabase init failed: $e');
+    debugPrint(
+      'Firebase init failed: $e\n'
+      'Check that android/app/google-services.json exists — see FIREBASE_SETUP.md.',
+    );
   }
 
   try {
@@ -42,9 +50,6 @@ void main() async {
     debugPrint('Notification init failed: $e');
   }
 
-  // Start keep-alive pinging
-  SupabaseKeepAlive.start();
-
   // Initialize home screen widgets bridge
   try {
     await HomeWidgetService.initialize();
@@ -52,7 +57,7 @@ void main() async {
     debugPrint('HomeWidget init failed: $e');
   }
 
-  // Initialize SMS auto-detection (requests permission on first launch)
+  // Resume SMS auto-detection if the user previously opted in (never prompts).
   try {
     await SmsTransactionService.instance.initialize();
   } catch (e) {
@@ -103,7 +108,7 @@ class _SplashScreenState extends State<SplashScreen> {
     await Future.delayed(const Duration(milliseconds: 500));
     if (!mounted) return;
 
-    if (SupabaseService.isAuthenticated) {
+    if (AuthService.isAuthenticated) {
       Navigator.of(context).pushReplacement(
         PageRouteBuilder(
           pageBuilder: (_, __, ___) => const DashboardScreen(),
@@ -327,7 +332,22 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                   ),
                 ),
-                const SizedBox(height: 28),
+                if (!_isSignUp)
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton(
+                      onPressed: _isLoading ? null : _handlePasswordReset,
+                      child: Text(
+                        'Forgot password?',
+                        style: GoogleFonts.inter(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w500,
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
+                    ),
+                  ),
+                SizedBox(height: _isSignUp ? 28 : 12),
 
                 // Login/SignUp button
                 SizedBox(
@@ -447,25 +467,25 @@ class _LoginScreenState extends State<LoginScreen> {
 
     try {
       if (_isSignUp) {
-        await SupabaseService.signUp(
+        await AuthService.signUp(
             _emailController.text.trim(), _passwordController.text);
         _showSuccess('Account created! Check your email to verify.');
       } else {
-        await SupabaseService.signIn(
+        await AuthService.signIn(
             _emailController.text.trim(), _passwordController.text);
-        _navigateToDashboard();
       }
+      _navigateToDashboard();
     } catch (e) {
       _showError(e.toString());
     } finally {
-      setState(() => _isLoading = false);
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
   Future<void> _handleGoogleSignIn() async {
     setState(() => _isLoading = true);
     try {
-      final success = await SupabaseService.signInWithGoogle();
+      final success = await AuthService.signInWithGoogle();
       if (success) {
         _navigateToDashboard();
       } else {
@@ -474,17 +494,37 @@ class _LoginScreenState extends State<LoginScreen> {
     } catch (e) {
       _showError(e.toString());
     } finally {
-      setState(() => _isLoading = false);
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _handlePasswordReset() async {
+    final email = _emailController.text.trim();
+    if (email.isEmpty) {
+      _showError('Enter your email first, then tap Forgot password');
+      return;
+    }
+
+    setState(() => _isLoading = true);
+    try {
+      await AuthService.sendPasswordReset(email);
+      _showSuccess('Password reset link sent to $email');
+    } catch (e) {
+      _showError(e.toString());
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
   void _navigateToDashboard() {
+    if (!mounted) return;
     Navigator.of(context).pushReplacement(
       MaterialPageRoute(builder: (_) => const DashboardScreen()),
     );
   }
 
   void _showError(String message) {
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message, style: GoogleFonts.inter()),
@@ -495,6 +535,7 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   void _showSuccess(String message) {
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message, style: GoogleFonts.inter()),

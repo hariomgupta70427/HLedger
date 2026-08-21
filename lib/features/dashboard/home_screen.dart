@@ -1,17 +1,21 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
+import '../../core/format/money.dart';
 import '../../core/theme/app_theme.dart';
+import '../../models/transaction.dart';
 import '../../providers/app_provider.dart';
-import '../../services/supabase_service.dart';
+import '../../services/firebase/auth_service.dart';
 import '../../shared/widgets/quick_actions.dart';
 import '../../shared/widgets/transaction_card.dart';
 import '../../main.dart';
 import '../upi_import/upi_import_screen.dart';
+import '../analytics/analytics_category_colors.dart';
 import '../analytics/analytics_screen.dart';
 import '../compliance/privacy_policy_screen.dart';
 
-/// Dashboard/Home screen — the landing page with analytics.
+/// Dashboard/Home screen — opens on the balance, then this month, then the week.
 class HomeScreen extends StatefulWidget {
   /// Callback to navigate to a specific tab index.
   final void Function(int tabIndex)? onNavigateToTab;
@@ -30,6 +34,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _scrollController.dispose();
     super.dispose();
   }
+
   static const List<String> _quotes = [
     '"Beware of little expenses; a small leak will sink a great ship." — Benjamin Franklin',
     '"Do not save what is left after spending, spend what is left after saving." — Warren Buffett',
@@ -59,15 +64,16 @@ class _HomeScreenState extends State<HomeScreen> {
       body: SafeArea(
         child: Consumer<AppProvider>(
           builder: (context, provider, _) {
+            final stats = _Stats.from(provider.transactions);
+
             return CustomScrollView(
               controller: _scrollController,
               physics: const BouncingScrollPhysics(),
               slivers: [
-                // App bar
-                SliverToBoxAdapter(child: _buildAppBar(context)),
-                // Greeting card
-                SliverToBoxAdapter(child: _buildGreetingCard()),
-                // Quick actions
+                SliverToBoxAdapter(
+                  child: _buildAppBar(context, provider.pendingReviewCount),
+                ),
+                SliverToBoxAdapter(child: _buildBalanceHero(stats)),
                 SliverToBoxAdapter(
                   child: QuickActionsRow(
                     onViewSummary: () {
@@ -80,15 +86,10 @@ class _HomeScreenState extends State<HomeScreen> {
                     onNavigateToTab: widget.onNavigateToTab,
                   ),
                 ),
-                // Quick stats
-                SliverToBoxAdapter(child: _buildQuickStats(provider)),
-                // Weekly chart
-                SliverToBoxAdapter(child: _buildWeeklyChart(provider)),
-                // Category breakdown
-                SliverToBoxAdapter(child: _buildCategoryBreakdown(provider)),
-                // Recent activity
+                SliverToBoxAdapter(child: _buildMonthGrid(stats)),
+                SliverToBoxAdapter(child: _buildWeekChart(stats)),
+                SliverToBoxAdapter(child: _buildCategoryBreakdown(stats)),
                 SliverToBoxAdapter(child: _buildRecentActivity(provider)),
-                // Quote
                 SliverToBoxAdapter(child: _buildQuote()),
                 const SliverToBoxAdapter(child: SizedBox(height: 24)),
               ],
@@ -99,7 +100,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildAppBar(BuildContext context) {
+  Widget _buildAppBar(BuildContext context, int pendingReview) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 12, 12, 0),
       child: Row(
@@ -114,16 +115,12 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
           ),
-          IconButton(
-            icon: Container(
-              padding: const EdgeInsets.all(6),
-              decoration: BoxDecoration(
-                color: AppColors.accent.withValues(alpha: 0.12),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: const Icon(Icons.insights_rounded, color: AppColors.accent, size: 18),
-            ),
+          _IconAction(
+            icon: Icons.insights_rounded,
             tooltip: 'Analytics',
+            // Labelled, because a bare icon chip read as decoration and went
+            // unnoticed. The label is what makes it obviously tappable.
+            label: 'Insights',
             onPressed: () {
               Navigator.push(
                 context,
@@ -131,16 +128,11 @@ class _HomeScreenState extends State<HomeScreen> {
               );
             },
           ),
-          IconButton(
-            icon: Container(
-              padding: const EdgeInsets.all(6),
-              decoration: BoxDecoration(
-                color: AppColors.accent.withValues(alpha: 0.12),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: const Icon(Icons.sms_rounded, color: AppColors.accent, size: 18),
-            ),
-            tooltip: 'Import UPI SMS',
+          _IconAction(
+            icon: Icons.sms_rounded,
+            tooltip: 'Review detected transactions',
+            // Detection is worthless if the queue it fills is invisible.
+            badge: pendingReview,
             onPressed: () {
               Navigator.push(
                 context,
@@ -153,7 +145,16 @@ class _HomeScreenState extends State<HomeScreen> {
             },
           ),
           PopupMenuButton<String>(
-            icon: const Icon(Icons.settings_rounded, color: AppColors.textSecondary),
+            icon: Container(
+              padding: const EdgeInsets.all(6),
+              decoration: BoxDecoration(
+                color: AppColors.surface2,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: const Icon(Icons.settings_rounded,
+                  color: AppColors.textSecondary, size: 18),
+            ),
+            tooltip: 'Settings',
             color: AppColors.surface,
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
             onSelected: (value) async {
@@ -217,14 +218,16 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: Text('Logout', style: GoogleFonts.inter(color: AppColors.red, fontWeight: FontWeight.w600)),
+            child: Text('Logout',
+                style: GoogleFonts.inter(
+                    color: AppColors.red, fontWeight: FontWeight.w600)),
           ),
         ],
       ),
     );
 
     if (confirmed == true && mounted) {
-      await SupabaseService.signOut();
+      await AuthService.signOut();
       if (mounted) {
         Navigator.of(context).pushAndRemoveUntil(
           MaterialPageRoute(builder: (_) => const SplashScreen()),
@@ -234,15 +237,20 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  Widget _buildGreetingCard() {
-    final name = SupabaseService.displayName;
-    final firstLetter = name.isNotEmpty ? name[0].toUpperCase() : 'U';
+  /// Balance, with the two figures it is made of underneath it.
+  ///
+  /// Income and expense are shown side by side rather than collapsed into a
+  /// single net number: the net alone cannot tell a ₹0 balance earned by
+  /// spending nothing apart from one earned by spending everything.
+  Widget _buildBalanceHero(_Stats stats) {
+    final name = AuthService.displayName;
+    final inCredit = stats.balance >= 0;
 
     return Container(
-      margin: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-      padding: const EdgeInsets.all(20),
+      margin: const EdgeInsets.fromLTRB(16, 14, 16, 8),
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
       decoration: BoxDecoration(
-        gradient: LinearGradient(
+        gradient: const LinearGradient(
           colors: [AppColors.surface, AppColors.surface2],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
@@ -250,45 +258,136 @@ class _HomeScreenState extends State<HomeScreen> {
         borderRadius: BorderRadius.circular(20),
         border: Border.all(color: AppColors.border),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            width: 48,
-            height: 48,
-            decoration: BoxDecoration(
-              color: AppColors.accent.withValues(alpha: 0.2),
-              shape: BoxShape.circle,
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  '$_greeting, $name',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: GoogleFonts.inter(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              _buildAvatar(name),
+            ],
+          ),
+          const SizedBox(height: 18),
+          Text(
+            'BALANCE',
+            style: GoogleFonts.inter(
+              fontSize: 10,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 1.2,
+              color: AppColors.textSecondary,
             ),
-            child: Center(
+          ),
+          const SizedBox(height: 6),
+          TweenAnimationBuilder<double>(
+            tween: Tween(begin: 0, end: stats.balance),
+            duration: const Duration(milliseconds: 750),
+            curve: Curves.easeOutCubic,
+            builder: (_, value, __) => FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerLeft,
               child: Text(
-                firstLetter,
-                style: GoogleFonts.inter(
-                  fontSize: 22,
-                  fontWeight: FontWeight.bold,
-                  color: AppColors.accent,
+                Money.rupees(value),
+                style: GoogleFonts.jetBrainsMono(
+                  fontSize: 38,
+                  fontWeight: FontWeight.w700,
+                  height: 1.1,
+                  color: inCredit ? AppColors.textPrimary : AppColors.red,
                 ),
               ),
             ),
           ),
-          const SizedBox(width: 14),
+          const SizedBox(height: 18),
+          Row(
+            children: [
+              Expanded(
+                child: _buildFlow(
+                  'Income',
+                  stats.income,
+                  AppColors.green,
+                  Icons.south_west_rounded,
+                ),
+              ),
+              Container(width: 1, height: 36, color: AppColors.border),
+              Expanded(
+                child: _buildFlow(
+                  'Expense',
+                  stats.expense,
+                  AppColors.red,
+                  Icons.north_east_rounded,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAvatar(String name) {
+    final initial = name.characters.isNotEmpty
+        ? name.characters.first.toUpperCase()
+        : 'U';
+    return Container(
+      width: 38,
+      height: 38,
+      decoration: BoxDecoration(
+        color: AppColors.accent.withValues(alpha: 0.2),
+        shape: BoxShape.circle,
+      ),
+      child: Center(
+        child: Text(
+          initial,
+          style: GoogleFonts.inter(
+            fontSize: 17,
+            fontWeight: FontWeight.bold,
+            color: AppColors.accent,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFlow(String label, double amount, Color color, IconData icon) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 2, right: 8),
+      child: Row(
+        children: [
+          Icon(icon, size: 15, color: color),
+          const SizedBox(width: 9),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  '$_greeting, $name 👋',
+                  label,
                   style: GoogleFonts.inter(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.textPrimary,
+                    fontSize: 11,
+                    color: AppColors.textSecondary,
                   ),
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  'Here\'s your quick overview',
-                  style: GoogleFonts.inter(
-                    fontSize: 13,
-                    color: AppColors.textSecondary,
+                const SizedBox(height: 3),
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    Money.rupees(amount),
+                    style: GoogleFonts.jetBrainsMono(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                      color: color,
+                    ),
                   ),
                 ),
               ],
@@ -299,12 +398,9 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildQuickStats(AppProvider provider) {
-    final totalTransactions = provider.transactions.length;
-    final completedTasks = provider.tasks.where((t) => t.completed).length;
-    final pendingTasks = provider.tasks.where((t) => !t.completed).length;
-    final netBalance = provider.totalIncome - provider.totalExpense;
-
+  /// Four money figures. The grid used to spend three of its four tiles on
+  /// counts — two of them task counts — on a screen whose subject is money.
+  Widget _buildMonthGrid(_Stats stats) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       child: Column(
@@ -312,48 +408,60 @@ class _HomeScreenState extends State<HomeScreen> {
         children: [
           Padding(
             padding: const EdgeInsets.only(left: 4, bottom: 10),
-            child: Text(
-              'Quick Stats',
-              style: GoogleFonts.inter(
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-                color: AppColors.textPrimary,
-              ),
+            child: Row(
+              children: [
+                Expanded(child: Text('This month', style: _sectionTitle())),
+                Text(
+                  DateFormat('MMMM').format(DateTime.now()),
+                  style: GoogleFonts.inter(
+                    fontSize: 12,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+              ],
             ),
           ),
           Row(
             children: [
-              Expanded(child: _StatCard(
-                icon: Icons.swap_horiz_rounded,
-                iconColor: AppColors.accent,
-                label: 'Transactions',
-                value: '$totalTransactions',
-              )),
+              Expanded(
+                child: _MoneyTile(
+                  icon: Icons.north_east_rounded,
+                  color: AppColors.red,
+                  label: 'Spent',
+                  amount: stats.monthSpent,
+                ),
+              ),
               const SizedBox(width: 10),
-              Expanded(child: _StatCard(
-                icon: Icons.check_circle_rounded,
-                iconColor: AppColors.green,
-                label: 'Tasks Done',
-                value: '$completedTasks',
-              )),
+              Expanded(
+                child: _MoneyTile(
+                  icon: Icons.south_west_rounded,
+                  color: AppColors.green,
+                  label: 'Received',
+                  amount: stats.monthReceived,
+                ),
+              ),
             ],
           ),
           const SizedBox(height: 10),
           Row(
             children: [
-              Expanded(child: _StatCard(
-                icon: Icons.pending_actions_rounded,
-                iconColor: AppColors.yellow,
-                label: 'Pending',
-                value: '$pendingTasks',
-              )),
+              Expanded(
+                child: _MoneyTile(
+                  icon: Icons.today_rounded,
+                  color: AppColors.accent,
+                  label: 'Spent today',
+                  amount: stats.todaySpent,
+                ),
+              ),
               const SizedBox(width: 10),
-              Expanded(child: _StatCard(
-                icon: Icons.account_balance_wallet_rounded,
-                iconColor: netBalance >= 0 ? AppColors.green : AppColors.red,
-                label: 'Net Balance',
-                value: '₹${netBalance.toStringAsFixed(0)}',
-              )),
+              Expanded(
+                child: _MoneyTile(
+                  icon: Icons.speed_rounded,
+                  color: AppColors.yellow,
+                  label: 'Avg / day',
+                  amount: stats.monthDailyAverage,
+                ),
+              ),
             ],
           ),
         ],
@@ -361,221 +469,231 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildWeeklyChart(AppProvider provider) {
-    // Calculate last 7 days spending
-    final now = DateTime.now();
-    final weekDays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-    final dailySpending = List<double>.filled(7, 0);
+  /// Seven rolling days, drawn against a fixed reference rather than the week's
+  /// own peak.
+  ///
+  /// Normalising each week to its own maximum made every week look identical —
+  /// a ₹50 week and a ₹50,000 week both produced one full-height bar — which is
+  /// worse than no chart, because it reads as information.
+  Widget _buildWeekChart(_Stats stats) {
+    const plotHeight = 116.0;
+    final ceiling = stats.scaleCeiling;
+    final average = stats.weekAverage;
 
-    for (final t in provider.transactions) {
-      if (!t.isIncome) {
-        final daysAgo = now.difference(t.timestamp).inDays;
-        if (daysAgo >= 0 && daysAgo < 7) {
-          // Map to correct weekday slot (0=today going back)
-          final dayIndex = (now.weekday - 1 - daysAgo) % 7;
-          if (dayIndex >= 0 && dayIndex < 7) {
-            dailySpending[dayIndex] += t.amount;
-          }
-        }
-      }
-    }
-
-    final maxVal = dailySpending.reduce((a, b) => a > b ? a : b);
-
-    return Container(
-      margin: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: AppColors.border),
-      ),
+    return _Card(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            'This Week',
-            style: GoogleFonts.inter(
-              fontSize: 15,
-              fontWeight: FontWeight.w600,
-              color: AppColors.textPrimary,
-            ),
-          ),
-          const SizedBox(height: 18),
-          SizedBox(
-            height: 120,
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: List.generate(7, (i) {
-                final fraction = maxVal > 0 ? dailySpending[i] / maxVal : 0.0;
-                final isHighest = maxVal > 0 && dailySpending[i] == maxVal;
-                return Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 3),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.end,
-                      children: [
-                        if (dailySpending[i] > 0)
-                          Padding(
-                            padding: const EdgeInsets.only(bottom: 4),
-                            child: Text(
-                              '₹${dailySpending[i].toStringAsFixed(0)}',
-                              style: GoogleFonts.jetBrainsMono(
-                                fontSize: 8,
-                                color: AppColors.textSecondary,
-                              ),
-                            ),
-                          ),
-                        TweenAnimationBuilder<double>(
-                          tween: Tween(begin: 0, end: fraction),
-                          duration: Duration(milliseconds: 600 + i * 100),
-                          curve: Curves.easeOutCubic,
-                          builder: (_, value, __) {
-                            return Container(
-                              height: (100 * value).clamp(4, 100),
-                              decoration: BoxDecoration(
-                                color: isHighest
-                                    ? AppColors.accent
-                                    : AppColors.accent.withValues(alpha: 0.3),
-                                borderRadius: BorderRadius.circular(6),
-                              ),
-                            );
-                          },
-                        ),
-                        const SizedBox(height: 6),
-                        Text(
-                          weekDays[i],
-                          style: GoogleFonts.inter(
-                            fontSize: 10,
-                            color: AppColors.textSecondary,
-                            fontWeight: isHighest ? FontWeight.w600 : FontWeight.w400,
-                          ),
-                        ),
-                      ],
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(child: Text('Last 7 days', style: _sectionTitle())),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    '${Money.rupees(stats.weekSpend)} out',
+                    style: GoogleFonts.jetBrainsMono(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.textPrimary,
                     ),
                   ),
-                );
-              }),
-            ),
+                  const SizedBox(height: 2),
+                  Text(
+                    'avg ${Money.rupees(average)}/day',
+                    style: GoogleFonts.inter(
+                      fontSize: 11,
+                      color: AppColors.textSecondary,
+                    ),
+                  ),
+                ],
+              ),
+            ],
           ),
+          const SizedBox(height: 18),
+          if (ceiling <= 0)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 20),
+              child: Text(
+                'Nothing spent in the last four weeks.',
+                style: GoogleFonts.inter(
+                  fontSize: 13,
+                  color: AppColors.textSecondary,
+                ),
+              ),
+            )
+          else ...[
+            SizedBox(
+              height: plotHeight,
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: List.generate(
+                  7,
+                  (i) => _buildBar(stats, i, ceiling, plotHeight),
+                ),
+              ),
+            ),
+            // A real baseline, so the bars sit on something. There used to be a
+            // free-floating average rule across the middle of the plot instead;
+            // it read as the axis, which made every bar look like it overshot
+            // below the line. The average is stated in the header rather than
+            // drawn.
+            Container(height: 1, color: AppColors.border),
+            const SizedBox(height: 8),
+            Row(children: List.generate(7, (i) => _buildDayLabel(stats, i))),
+            const SizedBox(height: 14),
+            Text(
+              'Full height is ${Money.rupees(ceiling)}, your busiest day in the '
+              'last four weeks — so these bars mean the same thing next week.',
+              style: GoogleFonts.inter(
+                fontSize: 11,
+                height: 1.45,
+                color: AppColors.textSecondary,
+              ),
+            ),
+          ],
         ],
       ),
     );
   }
 
-  Widget _buildCategoryBreakdown(AppProvider provider) {
-    // Compute spending by category
-    final categoryTotals = <String, double>{};
-    double totalExpense = 0;
+  Widget _buildBar(_Stats stats, int index, double ceiling, double plotHeight) {
+    final amount = stats.daySpend[index];
+    final isToday = index == stats.todayIndex;
+    final target = (amount / ceiling).clamp(0.0, 1.0);
 
-    for (final t in provider.transactions) {
-      if (!t.isIncome) {
-        categoryTotals[t.category] = (categoryTotals[t.category] ?? 0) + t.amount;
-        totalExpense += t.amount;
-      }
-    }
-
-    if (categoryTotals.isEmpty) return const SizedBox.shrink();
-
-    // Sort and take top 4
-    final sorted = categoryTotals.entries.toList()
-      ..sort((a, b) => b.value.compareTo(a.value));
-    final top = sorted.take(4).toList();
-
-    final categoryColors = {
-      'Food': const Color(0xFFFF9800),
-      'Transport': const Color(0xFF42A5F5),
-      'Shopping': const Color(0xFFE91E63),
-      'Bills': const Color(0xFF26A69A),
-      'Entertainment': const Color(0xFFAB47BC),
-      'Health': const Color(0xFFEF5350),
-      'Education': const Color(0xFF66BB6A),
-      'Work': const Color(0xFF5C6BC0),
-      'Friends & Family': const Color(0xFFEC407A),
-      'Other': const Color(0xFF78909C),
-    };
-
-    return Container(
-      margin: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: AppColors.border),
+    return Expanded(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4),
+        child: TweenAnimationBuilder<double>(
+          tween: Tween<double>(begin: 0, end: target),
+          duration: Duration(milliseconds: 550 + index * 60),
+          curve: Curves.easeOutCubic,
+          builder: (_, value, __) => Container(
+            // A day with no spend keeps a 2px trace so the axis stays readable,
+            // but it must not be mistaken for a small amount.
+            height: amount > 0 ? (plotHeight * value).clamp(3.0, plotHeight) : 2,
+            decoration: BoxDecoration(
+              color: amount <= 0
+                  ? AppColors.surface2
+                  : isToday
+                      ? AppColors.accent
+                      : AppColors.accent.withValues(alpha: 0.38),
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(5),
+              ),
+            ),
+          ),
+        ),
       ),
+    );
+  }
+
+  Widget _buildDayLabel(_Stats stats, int index) {
+    final isToday = index == stats.todayIndex;
+    return Expanded(
+      child: Text(
+        stats.dayLabels[index],
+        textAlign: TextAlign.center,
+        maxLines: 1,
+        style: GoogleFonts.inter(
+          fontSize: 10,
+          fontWeight: isToday ? FontWeight.w700 : FontWeight.w400,
+          color: isToday ? AppColors.accent : AppColors.textSecondary,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCategoryBreakdown(_Stats stats) {
+    if (stats.categories.isEmpty) return const SizedBox.shrink();
+
+    return _Card(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            'Top Categories',
-            style: GoogleFonts.inter(
-              fontSize: 15,
-              fontWeight: FontWeight.w600,
-              color: AppColors.textPrimary,
+          Row(
+            children: [
+              Expanded(child: Text('Where it goes', style: _sectionTitle())),
+              Text(
+                '${Money.rupees(stats.expense)} total',
+                style: GoogleFonts.jetBrainsMono(
+                  fontSize: 12,
+                  color: AppColors.textSecondary,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          ...stats.categories.map(_buildCategoryRow),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCategoryRow(_CategorySlice slice) {
+    final color = slice.isRemainder
+        ? AppColors.textSecondary
+        : AnalyticsCategoryColors.of(slice.label);
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  slice.label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: GoogleFonts.inter(
+                    fontSize: 13,
+                    color: AppColors.textPrimary,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                '${Money.rupees(slice.amount)}  ·  '
+                '${(slice.share * 100).round()}%',
+                style: GoogleFonts.jetBrainsMono(
+                  fontSize: 11,
+                  color: AppColors.textSecondary,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 7),
+          TweenAnimationBuilder<double>(
+            tween: Tween<double>(begin: 0, end: slice.share.clamp(0.0, 1.0)),
+            duration: const Duration(milliseconds: 800),
+            curve: Curves.easeOutCubic,
+            builder: (_, value, __) => Stack(
+              children: [
+                Container(
+                  height: 8,
+                  decoration: BoxDecoration(
+                    color: AppColors.surface2,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                ),
+                FractionallySizedBox(
+                  widthFactor: value,
+                  child: Container(
+                    height: 8,
+                    decoration: BoxDecoration(
+                      color: color,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
-          const SizedBox(height: 14),
-          ...top.map((entry) {
-            final pct = totalExpense > 0 ? entry.value / totalExpense : 0.0;
-            final color = categoryColors[entry.key] ?? const Color(0xFF78909C);
-            return Padding(
-              padding: const EdgeInsets.only(bottom: 12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        entry.key,
-                        style: GoogleFonts.inter(
-                          fontSize: 13,
-                          color: AppColors.textPrimary,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                      Text(
-                        '₹${entry.value.toStringAsFixed(0)} (${(pct * 100).toStringAsFixed(0)}%)',
-                        style: GoogleFonts.jetBrainsMono(
-                          fontSize: 11,
-                          color: AppColors.textSecondary,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 6),
-                  TweenAnimationBuilder<double>(
-                    tween: Tween(begin: 0, end: pct),
-                    duration: const Duration(milliseconds: 800),
-                    curve: Curves.easeOutCubic,
-                    builder: (_, value, __) {
-                      return Stack(
-                        children: [
-                          Container(
-                            height: 8,
-                            decoration: BoxDecoration(
-                              color: AppColors.surface2,
-                              borderRadius: BorderRadius.circular(4),
-                            ),
-                          ),
-                          FractionallySizedBox(
-                            widthFactor: value,
-                            child: Container(
-                              height: 8,
-                              decoration: BoxDecoration(
-                                color: color,
-                                borderRadius: BorderRadius.circular(4),
-                              ),
-                            ),
-                          ),
-                        ],
-                      );
-                    },
-                  ),
-                ],
-              ),
-            );
-          }),
         ],
       ),
     );
@@ -584,20 +702,14 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildRecentActivity(AppProvider provider) {
     final recent = provider.transactions.take(3).toList();
     if (recent.isEmpty) {
-      return Container(
-        margin: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-        padding: const EdgeInsets.all(20),
-        decoration: BoxDecoration(
-          color: AppColors.surface,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: AppColors.border),
-        ),
+      return _Card(
         child: Center(
           child: Text(
-            'No transactions yet.\nStart by adding one! 📝',
+            'No transactions yet.\nAdd one, or turn on auto-detect.',
             textAlign: TextAlign.center,
             style: GoogleFonts.inter(
               fontSize: 14,
+              height: 1.5,
               color: AppColors.textSecondary,
             ),
           ),
@@ -610,21 +722,14 @@ class _HomeScreenState extends State<HomeScreen> {
       child: Column(
         children: [
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Padding(
                 padding: const EdgeInsets.only(left: 4),
-                child: Text(
-                  'Recent Activity',
-                  style: GoogleFonts.inter(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.textPrimary,
-                  ),
-                ),
+                child: Text('Recent activity', style: _sectionTitle()),
               ),
+              const Spacer(),
               TextButton(
-                onPressed: () => widget.onNavigateToTab?.call(1), // Go to Khaata
+                onPressed: () => widget.onNavigateToTab?.call(1),
                 child: Text(
                   'See all →',
                   style: GoogleFonts.inter(
@@ -635,7 +740,12 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ],
           ),
-          ...recent.map((t) => TransactionCard(transaction: t)),
+          ...recent.map(
+            (t) => TransactionCard(
+              transaction: t,
+              onTap: () => widget.onNavigateToTab?.call(1),
+            ),
+          ),
         ],
       ),
     );
@@ -658,28 +768,216 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 }
 
-/// Stat card with icon, number, and label — animates number counting up.
-class _StatCard extends StatelessWidget {
-  final IconData icon;
-  final Color iconColor;
-  final String label;
-  final String value;
+TextStyle _sectionTitle() => GoogleFonts.inter(
+      fontSize: 15,
+      fontWeight: FontWeight.w600,
+      color: AppColors.textPrimary,
+    );
 
-  const _StatCard({
-    required this.icon,
-    required this.iconColor,
-    required this.label,
-    required this.value,
+/// Everything the dashboard reads, computed in a single pass over the ledger.
+///
+/// The screen used to walk the transaction list four times per rebuild — once
+/// per section — and recompute the balance by hand from two getters that each
+/// walked it again.
+class _Stats {
+  const _Stats({
+    required this.income,
+    required this.expense,
+    required this.monthSpent,
+    required this.monthReceived,
+    required this.todaySpent,
+    required this.daysElapsed,
+    required this.dayLabels,
+    required this.daySpend,
+    required this.scaleCeiling,
+    required this.categories,
   });
+
+  final double income;
+  final double expense;
+  final double monthSpent;
+  final double monthReceived;
+  final double todaySpent;
+  final int daysElapsed;
+
+  /// A rolling seven days, oldest first. Today is always the last column, which
+  /// is what makes the labels agree with the window the data covers — fixed
+  /// Mon–Sun columns described a calendar week the filter never used.
+  final List<String> dayLabels;
+  final List<double> daySpend;
+
+  /// Height reference for the bars: the busiest single day in the last four
+  /// weeks.
+  final double scaleCeiling;
+
+  final List<_CategorySlice> categories;
+
+  int get todayIndex => daySpend.length - 1;
+  double get balance => income - expense;
+  double get weekSpend => daySpend.fold(0.0, (sum, value) => sum + value);
+  double get weekAverage => weekSpend / daySpend.length;
+
+  /// Spend per day *elapsed*, not per day in the month — dividing a partial
+  /// month by 31 understates the pace it is actually running at.
+  double get monthDailyAverage =>
+      daysElapsed == 0 ? 0 : monthSpent / daysElapsed;
+
+  factory _Stats.from(List<Transaction> transactions) {
+    final now = DateTime.now();
+    // Day keys are UTC midnights: subtracting local midnights can return 23 or
+    // 25 hours across a zone change and drop a transaction into the wrong day.
+    final today = DateTime.utc(now.year, now.month, now.day);
+    final windowStart = today.subtract(const Duration(days: 27));
+    final monthStart = DateTime.utc(now.year, now.month);
+
+    var income = 0.0;
+    var expense = 0.0;
+    var monthSpent = 0.0;
+    var monthReceived = 0.0;
+    var todaySpent = 0.0;
+
+    final daySpend = List<double>.filled(7, 0);
+    final windowSpend = <DateTime, double>{};
+    final byCategory = <String, double>{};
+
+    for (final t in transactions) {
+      final stamp = t.timestamp;
+      final day = DateTime.utc(stamp.year, stamp.month, stamp.day);
+      final thisMonth = !day.isBefore(monthStart);
+
+      if (t.isIncome) {
+        income += t.amount;
+        if (thisMonth) monthReceived += t.amount;
+        continue;
+      }
+
+      expense += t.amount;
+      byCategory[t.category] = (byCategory[t.category] ?? 0) + t.amount;
+      if (thisMonth) monthSpent += t.amount;
+      if (day == today) todaySpent += t.amount;
+
+      if (!day.isBefore(windowStart) && !day.isAfter(today)) {
+        windowSpend[day] = (windowSpend[day] ?? 0) + t.amount;
+        final daysAgo = today.difference(day).inDays;
+        if (daysAgo < 7) daySpend[6 - daysAgo] += t.amount;
+      }
+    }
+
+    var ceiling = 0.0;
+    for (final value in windowSpend.values) {
+      if (value > ceiling) ceiling = value;
+    }
+
+    final labels = <String>[];
+    for (var back = 6; back >= 0; back--) {
+      labels.add(back == 0
+          ? 'Today'
+          : DateFormat('E').format(now.subtract(Duration(days: back))));
+    }
+
+    return _Stats(
+      income: income,
+      expense: expense,
+      monthSpent: monthSpent,
+      monthReceived: monthReceived,
+      todaySpent: todaySpent,
+      daysElapsed: now.day,
+      dayLabels: labels,
+      daySpend: daySpend,
+      scaleCeiling: ceiling,
+      categories: _slice(byCategory, expense),
+    );
+  }
+
+  /// Top four categories plus a remainder.
+  ///
+  /// Without the remainder the bars on screen sum to whatever the top four
+  /// happen to cover, and a breakdown that adds up to 71% with nothing to
+  /// account for the rest reads as a bug.
+  static List<_CategorySlice> _slice(
+    Map<String, double> byCategory,
+    double total,
+  ) {
+    if (byCategory.isEmpty || total <= 0) return const <_CategorySlice>[];
+
+    final sorted = byCategory.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+
+    final slices = <_CategorySlice>[
+      for (final entry in sorted.take(4))
+        _CategorySlice(entry.key, entry.value, entry.value / total),
+    ];
+
+    if (sorted.length > 4) {
+      final rest = sorted
+          .skip(4)
+          .fold<double>(0, (sum, entry) => sum + entry.value);
+      slices.add(_CategorySlice(
+        'Everything else',
+        rest,
+        rest / total,
+        isRemainder: true,
+      ));
+    }
+
+    return slices;
+  }
+}
+
+class _CategorySlice {
+  const _CategorySlice(
+    this.label,
+    this.amount,
+    this.share, {
+    this.isRemainder = false,
+  });
+
+  final String label;
+  final double amount;
+  final double share;
+  final bool isRemainder;
+}
+
+class _Card extends StatelessWidget {
+  const _Card({required this.child});
+
+  final Widget child;
 
   @override
   Widget build(BuildContext context) {
-    // Parse numeric value for animation, fallback to displaying directly
-    final numericStr = value.replaceAll(RegExp(r'[^0-9.-]'), '');
-    final numericVal = double.tryParse(numericStr);
-    final prefix = value.startsWith('₹') ? '₹' : '';
-    final isNegative = value.contains('-');
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: child,
+    );
+  }
+}
 
+/// A money tile that counts up to its value.
+///
+/// It takes the amount as a number. The tile it replaces took a pre-formatted
+/// string and stripped it back to a number with a regex in order to animate it,
+/// which stopped working the moment the string contained a separator.
+class _MoneyTile extends StatelessWidget {
+  const _MoneyTile({
+    required this.icon,
+    required this.color,
+    required this.label,
+    required this.amount,
+  });
+
+  final IconData icon;
+  final Color color;
+  final String label;
+  final double amount;
+
+  @override
+  Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -691,50 +989,141 @@ class _StatCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
-            width: 40,
-            height: 40,
+            width: 38,
+            height: 38,
             decoration: BoxDecoration(
-              color: iconColor.withValues(alpha: 0.15),
+              color: color.withValues(alpha: 0.15),
               borderRadius: BorderRadius.circular(12),
             ),
-            child: Icon(icon, color: iconColor, size: 20),
+            child: Icon(icon, color: color, size: 19),
           ),
           const SizedBox(height: 12),
-          if (numericVal != null)
-            TweenAnimationBuilder<double>(
-              tween: Tween(begin: 0, end: numericVal.abs()),
-              duration: const Duration(milliseconds: 800),
-              curve: Curves.easeOutCubic,
-              builder: (_, val, __) {
-                final displayVal = isNegative ? '-${val.toStringAsFixed(0)}' : val.toStringAsFixed(0);
-                return Text(
-                  '$prefix$displayVal',
-                  style: GoogleFonts.jetBrainsMono(
-                    fontSize: 24,
-                    fontWeight: FontWeight.w700,
-                    color: AppColors.textPrimary,
-                  ),
-                );
-              },
-            )
-          else
-            Text(
-              value,
-              style: GoogleFonts.jetBrainsMono(
-                fontSize: 24,
-                fontWeight: FontWeight.w700,
-                color: AppColors.textPrimary,
+          TweenAnimationBuilder<double>(
+            tween: Tween<double>(begin: 0, end: amount),
+            duration: const Duration(milliseconds: 750),
+            curve: Curves.easeOutCubic,
+            builder: (_, value, __) => FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerLeft,
+              child: Text(
+                Money.compact(value),
+                maxLines: 1,
+                style: GoogleFonts.jetBrainsMono(
+                  fontSize: 22,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.textPrimary,
+                ),
               ),
             ),
+          ),
           const SizedBox(height: 4),
           Text(
             label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
             style: GoogleFonts.inter(
               fontSize: 12,
               color: AppColors.textSecondary,
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// A header action, optionally labelled and optionally carrying a count.
+class _IconAction extends StatelessWidget {
+  const _IconAction({
+    required this.icon,
+    required this.tooltip,
+    required this.onPressed,
+    this.label,
+    this.badge = 0,
+  });
+
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback onPressed;
+  final String? label;
+  final int badge;
+
+  @override
+  Widget build(BuildContext context) {
+    final chip = Container(
+      padding: label == null
+          ? const EdgeInsets.all(6)
+          : const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: AppColors.accent.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, color: AppColors.accent, size: 18),
+          if (label != null) ...[
+            const SizedBox(width: 6),
+            Text(
+              label!,
+              style: GoogleFonts.inter(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: AppColors.accent,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+
+    return Tooltip(
+      message: tooltip,
+      child: InkWell(
+        onTap: onPressed,
+        borderRadius: BorderRadius.circular(10),
+        // 48dp minimum, so the tap target stays accessible even though the chip
+        // itself is smaller.
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 48, minWidth: 48),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+            child: Center(
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  chip,
+                  if (badge > 0)
+                    Positioned(
+                      top: -4,
+                      right: -4,
+                      child: Container(
+                        padding:
+                            const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                        constraints: const BoxConstraints(minWidth: 16),
+                        decoration: BoxDecoration(
+                          color: AppColors.red,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                              color: AppColors.background, width: 1.5),
+                        ),
+                        child: Text(
+                          badge > 9 ? '9+' : '$badge',
+                          textAlign: TextAlign.center,
+                          style: GoogleFonts.inter(
+                            fontSize: 9,
+                            fontWeight: FontWeight.w700,
+                            height: 1.3,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }

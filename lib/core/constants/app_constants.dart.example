@@ -1,9 +1,10 @@
 // This is a template. Copy it to app_constants.dart:
 //   cp lib/core/constants/app_constants.dart.example lib/core/constants/app_constants.dart
 //
-// Secrets are NOT stored in this file. They are injected at build time via
-// --dart-define-from-file=dart_defines.json (copy dart_defines.example.json).
-// Anything compiled into the APK is extractable, so never hardcode live keys.
+// This app ships NO provider API keys. Both the Groq and Gemini keys live in
+// Cloudflare Worker Secrets — see backend/hledger-ai-worker/README.md. The only
+// build-time value is the proxy's public address. Never put an API key here:
+// anything compiled into the APK is extractable by decompiling it.
 
 class AppConstants {
   static const String appName = 'HLedger';
@@ -11,31 +12,21 @@ class AppConstants {
       'Your Chat. Your Tasks. Your Transactions. Sorted.';
   static const String splashSubtext = 'Smart Ledger for Smarter You';
 
-  // Secrets via --dart-define / --dart-define-from-file. No default values.
-  static const String supabaseUrl = String.fromEnvironment('SUPABASE_URL');
-  static const String supabaseAnonKey = String.fromEnvironment('SUPABASE_ANON_KEY');
-  static const String openRouterKey = String.fromEnvironment('OPENROUTER_KEY');
+  // Injected at build time:
+  //   flutter build apk --release --dart-define=AI_PROXY_URL=https://...
+  //
+  // Firebase needs no dart-define: android/app/google-services.json carries the
+  // project config and is read by the google-services Gradle plugin at build time.
 
-  /// True when all required secrets were provided at build time.
-  static bool get hasRequiredSecrets =>
-      supabaseUrl.isNotEmpty && supabaseAnonKey.isNotEmpty;
+  /// Address of the HLedger AI proxy. A public URL, NOT a secret.
+  static const String aiProxyUrl = String.fromEnvironment('AI_PROXY_URL');
 
-  // OpenRouter API
-  static const String openRouterApiUrl =
-      'https://openrouter.ai/api/v1/chat/completions';
+  static bool get hasAiProxy => aiProxyUrl.isNotEmpty;
 
-  // Model fallback order
-  static const List<String> openRouterModels = [
-    'google/gemini-2.0-flash-lite-001',
-    'google/gemma-3-12b-it:free',
-    'google/gemma-3-4b-it:free',
-    'mistralai/mistral-small-3.1-24b-instruct:free',
-  ];
-
-  // Database Tables
-  static const String usersTable = 'users';
-  static const String transactionsTable = 'transactions';
-  static const String tasksTable = 'tasks';
+  // Firestore layout: users/{uid}/transactions and users/{uid}/tasks
+  static const String usersCollection = 'users';
+  static const String transactionsCollection = 'transactions';
+  static const String tasksCollection = 'tasks';
 
   // Notification Channel
   static const String notificationChannelId = 'hledger_reminders';

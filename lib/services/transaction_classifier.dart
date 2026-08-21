@@ -124,20 +124,50 @@ class TransactionClassifier {
 
   /// Classify a parsed UPI result into a category with a confidence score.
   ///
+  /// Matching is scoped to the counterparty — merchant, VPA, bank — and never
+  /// the whole message body. Scanning the body looks more thorough but is
+  /// actively wrong: 'rent' sits inside "current balance" and 'eat' inside
+  /// "created", so a routine balance line used to be filed under Bills.
+  ///
   /// Confidence heuristic:
   ///   0.95 — a merchant/VPA keyword matched (strong signal)
   ///   0.55 — no keyword, but we have a VPA/merchant string to show the user
   ///   0.35 — nothing but an amount and direction (weak, needs review)
+  ///
+  /// An unrecognised sender caps the result below the high-confidence
+  /// threshold: the message parsed, but nothing vouches for where it came from,
+  /// so it belongs in front of the user rather than one tap from the ledger.
   static ClassificationResult classify(UpiParseResult parsed) {
-    final haystack = [
-      parsed.vpa ?? '',
-      parsed.rawText,
-      parsed.bankName ?? '',
-    ].join(' ').toLowerCase();
+    final result = _categorise(parsed);
+    if (parsed.senderVerified) return result;
+    return ClassificationResult(result.category, result.confidence * 0.7);
+  }
 
-    for (final entry in _keywordCategory.entries) {
-      if (haystack.contains(entry.key)) {
-        return ClassificationResult(entry.value, 0.95);
+  static ClassificationResult _categorise(UpiParseResult parsed) {
+    // The parser's own suggestion is already scoped to the counterparty and
+    // token-aware, so it is the strongest signal available.
+    if (parsed.suggestedCategory != 'Other') {
+      return ClassificationResult(parsed.suggestedCategory, 0.95);
+    }
+
+    final labels = [parsed.merchant, parsed.vpa, parsed.bankName]
+        .whereType<String>()
+        .where((label) => label.isNotEmpty)
+        .map((label) => label.toLowerCase())
+        .toList();
+
+    for (final label in labels) {
+      final tokens = label.split(RegExp(r'[^a-z0-9]+'))
+        ..removeWhere((token) => token.isEmpty);
+
+      for (final entry in _keywordCategory.entries) {
+        final key = entry.key.trim();
+        // Short keys are matched whole. 'ola' as a substring hits 'chocolate',
+        // 'gas' hits 'gaspar' — a wrong category is worse than none.
+        final matched = key.length > 4
+            ? label.contains(key)
+            : tokens.contains(key);
+        if (matched) return ClassificationResult(entry.value, 0.9);
       }
     }
 
@@ -146,7 +176,7 @@ class TransactionClassifier {
       return const ClassificationResult('Work', 0.5);
     }
 
-    if ((parsed.vpa != null && parsed.vpa!.isNotEmpty)) {
+    if (labels.isNotEmpty) {
       return const ClassificationResult('Other', 0.55);
     }
 
@@ -163,13 +193,13 @@ class TransactionClassifier {
   ///
   /// [userId] is the current user's id (entries are personal). A local,
   /// time-based id is generated so the pending item can be tracked before it
-  /// ever reaches Supabase.
+  /// ever reaches Firestore.
   static Transaction toPendingTransaction(
     UpiParseResult parsed, {
     required String userId,
   }) {
     final result = classify(parsed);
-    final label = parsed.vpa ?? parsed.bankName ?? 'UPI transaction';
+    final label = parsed.displayLabel;
     return Transaction(
       id: 'local_${DateTime.now().microsecondsSinceEpoch}',
       userId: userId,
@@ -182,6 +212,9 @@ class TransactionClassifier {
       source: TransactionSource.autoDetected,
       confidence: result.confidence,
       status: TransactionStatus.pending,
+      // Carried so the same payment announced twice — once by SMS, once by the
+      // payment app — is recognised instead of queued twice.
+      detectionKey: parsed.dedupeKey,
     );
   }
 }

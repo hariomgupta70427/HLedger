@@ -11,7 +11,7 @@ class PrivacyPolicyScreen extends StatelessWidget {
   const PrivacyPolicyScreen({super.key});
 
   /// Update this whenever the policy text below changes.
-  static const String lastUpdated = 'July 18, 2026';
+  static const String lastUpdated = 'August 20, 2026';
 
   @override
   Widget build(BuildContext context) {
@@ -54,88 +54,118 @@ class PrivacyPolicyScreen extends StatelessWidget {
             _intro(
               'HLedger is built privacy-first. Your financial data is your '
               'own. This policy explains what we access, why, and where it '
-              'lives. In short: your transaction data stays on your device.',
+              'lives. In short: nothing leaves your device except what is '
+              'needed to sign you in and sync entries back to your own '
+              'account.',
             ),
             _section(
               '1. Data We Collect',
               'HLedger stores the expense and income entries you create, '
-              'your notes, tasks, and categories. When you use the optional '
-              'auto-import feature, we read incoming transaction SMS from '
-              'your bank and UPI apps to detect the amount and direction '
-              '(money in or out). We do not collect your contacts, location, '
-              'photos, or browsing activity.',
+              'your notes, tasks, and categories. When you turn on the optional '
+              'auto-detect feature, we read transaction alerts from your bank '
+              'and UPI apps — from their notifications, from their SMS, or '
+              'both, depending on which sources you enable — to detect the '
+              'amount and direction (money in or out). We do not collect your '
+              'contacts, location, photos, or browsing activity.',
             ),
             _section(
-              '2. On-Device Storage',
-              'Your transactions, tasks, notes, and everything derived from '
-              'SMS data are processed and stored only on your '
-              'device. This data is never uploaded to our servers and is '
-              'never sold or shared with third parties. Uninstalling the app '
-              'removes this local data.',
+              '2. Where Your Data Lives',
+              'Detected transactions waiting for your review, and your chat '
+              'history, stay on your device and are never uploaded. Raw SMS '
+              'text and raw notification text never leave your device at any '
+              'point. Entries you save are stored on your device and synced to '
+              'your own private account so they survive a reinstall or a new '
+              'phone — see section 7. This data is never sold or shared with '
+              'third parties. Uninstalling the app removes the local copy.',
             ),
             _section(
-              '3. SMS Access',
+              '3. Notification Access (optional)',
+              'With your explicit consent, HLedger uses Android\'s '
+              'Notification Listener to read incoming transaction alerts from '
+              'bank and UPI apps, only to suggest entries you review before '
+              'saving. We read notifications from a fixed allowlist of '
+              'banking, UPI and wallet apps only — notifications from every '
+              'other app on your device, including messaging and email, are '
+              'not opened and not stored. Captured alerts are held in '
+              'app-private storage on your device until you review them, then '
+              'deleted. You can revoke this anytime from Settings > '
+              'Notification access, or from the Review Inbox in HLedger.',
+            ),
+            _section(
+              '4. SMS Access (optional)',
               'With your explicit consent, HLedger reads incoming SMS to '
-              'detect transaction messages from banks and UPI apps. We use '
-              'this only to auto-create expense entries that you review '
-              'before saving. Messages are scanned on your device, only '
-              'financial transaction SMS are used, and the content never '
-              'leaves your device. HLedger never sends SMS. You can revoke '
-              'this access anytime from your phone Settings > Apps > HLedger '
-              '> Permissions.',
+              'detect transaction messages from banks and UPI apps. This '
+              'exists because many Indian banks announce a transaction only by '
+              'SMS. We read the message body and sender only to extract an '
+              'amount, a direction, a counterparty and a reference number. '
+              'Messages from an ordinary phone number are discarded without '
+              'being parsed, and messages containing a one-time password are '
+              'rejected before any figure is extracted. HLedger never sends '
+              'SMS. Raw SMS content is never transmitted off the device, and '
+              'never sent to the AI provider in section 6. You can revoke this '
+              'anytime from Settings > Apps > HLedger > Permissions > SMS.',
             ),
             _section(
-              '4. What SMS We Read',
-              'HLedger only extracts the amount and whether money moved in or '
-              'out from transaction SMS. It does not read, store, or transmit '
-              'OTPs, personal messages, or any non-financial SMS.',
+              '5. Auto-detect Is Not Complete, By Design',
+              'Auto-detect is a convenience, not a system of record. Cash '
+              'transactions cannot be detected at all, and some apps and banks '
+              'announce transactions in ways the app cannot read. Every '
+              'detected transaction is shown to you for confirmation before it '
+              'is saved, and anything missed can be added manually. HLedger '
+              'never books an entry to your ledger without your confirmation.',
             ),
             _section(
-              '5. AI Chat Assistant',
+              '6. AI Chat Assistant',
               'If you use the in-app AI chat, the messages you type are sent '
-              'to the Groq API (groq.com) so the AI model can '
-              'generate a reply. Only the text you choose to send in chat '
-              'leaves the device for this feature. Your stored transactions '
-              'are not sent unless you include them in a message. Please '
-              'review Groq\'s own privacy terms for how they handle '
-              'requests. Do not share sensitive information in chat.',
+              'to the Groq API (groq.com), and if Groq is unavailable to the '
+              'Google Gemini API, so a model can generate a reply. Only the '
+              'text you choose to send in chat leaves the device for this '
+              'feature, along with the recent chat turns needed for context. '
+              'Your stored transactions, your SMS and your notifications are '
+              'not sent to either provider unless you personally type that '
+              'information into a message. Please review Groq\'s and Google\'s '
+              'own privacy terms. Do not share sensitive information in chat.',
             ),
             _section(
-              '6. Authentication',
-              'Account sign-in and sync are powered by Supabase. When you '
-              'create an account we store your email and authentication '
-              'details with Supabase to keep you signed in. This is used '
-              'only for authentication and any sync features you enable.',
+              '7. Authentication & Sync',
+              'Account sign-in and sync are powered by Google Firebase — '
+              'Firebase Authentication for sign-in and Cloud Firestore for '
+              'sync. When you create an account we store your email and '
+              'authentication details with Firebase to keep you signed in, '
+              'and the entries you save are written to your own area of the '
+              'database. Security rules restrict every record to the account '
+              'that created it, so no other user can read your data. Review '
+              'Google\'s privacy terms for how they handle this.',
             ),
             _section(
-              '7. No Third-Party Sharing',
+              '8. No Third-Party Sharing',
               'We do not sell your data. We do not share your financial data '
               'with advertisers or data brokers. The only external services '
-              'involved are the ones described above (Groq for AI chat '
-              'and Supabase for authentication), used solely to provide those '
-              'features.',
+              'involved are the ones described above (Groq and Google Gemini '
+              'for AI chat, Google Firebase for authentication and sync), used '
+              'solely to provide those features.',
             ),
             _section(
-              '8. Your Rights',
+              '9. Your Rights',
               'You control your data. You can delete individual entries, '
-              'clear all local data, revoke notification access, and delete '
-              'your account. Uninstalling the app removes on-device data. To '
-              'request account deletion or a data export, contact us using '
-              'the details below.',
+              'clear all local data, revoke notification and SMS access, and '
+              'delete your account. Uninstalling the app removes on-device '
+              'data. To request account deletion or a data export, contact us '
+              'using the details below.',
             ),
             _section(
-              '9. Children\'s Privacy',
+              '10. Children\'s Privacy',
               'HLedger is not directed at children under 13, and we do not '
               'knowingly collect data from them.',
             ),
             _section(
-              '10. Changes to This Policy',
+              '11. Changes to This Policy',
               'We may update this policy from time to time. Material changes '
               'will be reflected here with a new "Last updated" date.',
             ),
             _section(
-              '11. Contact',
-              'Questions about privacy? Reach out at [YOUR_EMAIL].',
+              '12. Contact',
+              'Questions about privacy? Reach out at guptahariom049@gmail.com.',
             ),
             const SizedBox(height: 8),
             Text(

@@ -1,11 +1,6 @@
 // AnalyticsScreen — premium, CRED-style spending insights.
 //
-// INTEGRATION NOTE: This screen is intentionally NOT wired into navigation.
-// To surface it, add it as a tab in DashboardScreen or push it from a button
-// on home_screen (e.g. QuickActionsRow), e.g.:
-//     Navigator.of(context).push(
-//       MaterialPageRoute(builder: (_) => const AnalyticsScreen()),
-//     );
+// Pushed from the insights button in the home screen app bar.
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -97,24 +92,38 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
 
   Widget _buildHeader() {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 16, 20, 4),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      padding: const EdgeInsets.fromLTRB(8, 8, 20, 4),
+      child: Row(
         children: [
-          Text(
-            'Insights',
-            style: GoogleFonts.inter(
-              fontSize: 26,
-              fontWeight: FontWeight.w700,
-              color: AppColors.textPrimary,
-            ),
+          // Pushed as a full-screen route with no AppBar, so without this the
+          // only way back is the system gesture.
+          IconButton(
+            icon: const Icon(Icons.arrow_back_rounded,
+                color: AppColors.textPrimary),
+            tooltip: 'Back',
+            onPressed: () => Navigator.of(context).maybePop(),
           ),
-          const SizedBox(height: 2),
-          Text(
-            'Where your money goes',
-            style: GoogleFonts.inter(
-              fontSize: 13,
-              color: AppColors.textSecondary,
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Insights',
+                  style: GoogleFonts.inter(
+                    fontSize: 26,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'Where your money goes',
+                  style: GoogleFonts.inter(
+                    fontSize: 13,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+              ],
             ),
           ),
         ],

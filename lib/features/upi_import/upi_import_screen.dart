@@ -17,9 +17,9 @@ import '../compliance/prominent_disclosure_dialog.dart';
 /// each entry before it enters the Khaata book. Nothing is saved to the server
 /// until the user confirms — the queue lives only on the device.
 ///
-/// COMPLIANCE: before requesting notification access, callers show the
+/// COMPLIANCE: before requesting SMS access, callers show the
 /// prominent-disclosure dialog (see lib/features/compliance/). See
-/// [_ensurePermission].
+/// [_enableAutoDetect].
 class UpiImportScreen extends StatefulWidget {
   final void Function(int tabIndex)? onNavigateToTab;
 
@@ -29,10 +29,12 @@ class UpiImportScreen extends StatefulWidget {
   State<UpiImportScreen> createState() => _UpiImportScreenState();
 }
 
-class _UpiImportScreenState extends State<UpiImportScreen> {
+class _UpiImportScreenState extends State<UpiImportScreen>
+    with WidgetsBindingObserver {
   final _smsService = SmsTransactionService.instance;
   bool _isChecking = false;
-  bool _autoDetectOn = false;
+  bool _smsOn = false;
+  bool _notificationsOn = false;
 
   static const _categories = [
     'Food', 'Transport', 'Shopping', 'Bills',
@@ -43,43 +45,76 @@ class _UpiImportScreenState extends State<UpiImportScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _refreshStatus();
   }
 
-  /// On open, only CHECK whether auto-detect is already enabled — never prompt.
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  /// Notification access is granted on a system settings screen, so the app is
+  /// backgrounded while the user decides. Re-checking on resume is what makes
+  /// the toggle reflect reality instead of whatever it read before leaving.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _syncNotificationState();
+  }
+
+  /// On open, only CHECK which sources are already enabled — never prompt.
   ///
   /// This is the fix for the old flow that ambushed the user with a permission
-  /// dialog the moment the screen opened. Enabling auto-detect is now a
-  /// deliberate opt-in tap (see [_enableAutoDetect]). Detection itself still
-  /// runs app-wide from startup (main.dart + AppProvider), so this screen just
-  /// reflects state — turning it off here does not exist; Android owns that.
+  /// dialog the moment the screen opened. Enabling is now a deliberate tap.
+  /// Detection itself runs app-wide from startup (main.dart + AppProvider), so
+  /// this screen just reflects state.
   Future<void> _refreshStatus() async {
     setState(() => _isChecking = true);
     try {
-      // initialize() only checks permission (isPermissionGranted) and starts
-      // listening if already granted — it never opens a system prompt.
-      final has = await _smsService.initialize();
+      // initialize() only checks what was granted and resumes listening if so —
+      // it never opens a system prompt.
+      final sms = await _smsService.initialize();
+      final notifications = await _smsService.checkNotificationAccess();
       if (mounted) {
         setState(() {
           _isChecking = false;
-          _autoDetectOn = has;
+          _smsOn = sms;
+          _notificationsOn = notifications;
         });
       }
     } catch (e) {
-      debugPrint('❌ Notification listener check failed: $e');
+      debugPrint('❌ Auto-detect status check failed: $e');
       if (mounted) setState(() => _isChecking = false);
     }
   }
 
-  /// Deliberate opt-in: the user tapped "Turn on auto-detect".
+  Future<void> _syncNotificationState() async {
+    final granted = await _smsService.checkNotificationAccess();
+    if (!mounted || granted == _notificationsOn) return;
+    setState(() => _notificationsOn = granted);
+    // Coming back from Android's settings screen is the moment the user wants a
+    // straight answer about whether it worked.
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          granted
+              ? 'Payment detection is on. New payments will show up here.'
+              : 'Payment detection is off.',
+          style: GoogleFonts.inter(),
+        ),
+        backgroundColor: AppColors.surface2,
+      ),
+    );
+  }
+
+  /// Deliberate opt-in for the SMS source.
   ///
   /// COMPLIANCE: Google Play requires a prominent in-app disclosure shown
-  /// BEFORE requesting notification-listener access. We only open the system
-  /// settings after the user accepts [ProminentDisclosure.show]. Granting here
-  /// enables the same app-wide detection path — breakdown auto-detect keeps
-  /// working exactly as before.
-  Future<void> _enableAutoDetect() async {
-    final accepted = await ProminentDisclosure.show(context);
+  /// BEFORE requesting SMS access. The system dialog only appears after the
+  /// user accepts.
+  Future<void> _enableSms() async {
+    final accepted = await ProminentDisclosure.showForSms(context);
     if (!accepted || !mounted) return;
 
     setState(() => _isChecking = true);
@@ -88,12 +123,29 @@ class _UpiImportScreenState extends State<UpiImportScreen> {
       if (mounted) {
         setState(() {
           _isChecking = false;
-          _autoDetectOn = granted;
+          _smsOn = granted;
         });
       }
     } catch (e) {
-      debugPrint('❌ Notification listener enable failed: $e');
+      debugPrint('❌ SMS auto-detect enable failed: $e');
       if (mounted) setState(() => _isChecking = false);
+    }
+  }
+
+  /// Deliberate opt-in for the payment-app notification source.
+  ///
+  /// Android grants this on a settings screen rather than through a dialog, so
+  /// the result is also re-checked on resume — see
+  /// [didChangeAppLifecycleState].
+  Future<void> _enableNotifications() async {
+    final accepted = await ProminentDisclosure.showForNotifications(context);
+    if (!accepted || !mounted) return;
+
+    try {
+      final granted = await _smsService.requestNotificationAccess();
+      if (mounted) setState(() => _notificationsOn = granted);
+    } catch (e) {
+      debugPrint('❌ Notification access enable failed: $e');
     }
   }
 
@@ -154,18 +206,16 @@ class _UpiImportScreenState extends State<UpiImportScreen> {
     return Consumer<AppProvider>(
       builder: (context, provider, _) {
         final pending = provider.pendingReview;
-        // If there are already detected transactions, always show them —
-        // even if the OS toggle was later revoked, the queue is still useful.
-        if (pending.isEmpty) {
-          return _autoDetectOn ? _buildEmptyState() : _buildOptInState();
-        }
-
+        // Already-detected transactions are always shown, even if a source was
+        // later revoked in system settings — the queue is still the user's.
         return ListView.builder(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-          itemCount: pending.length + 1,
+          itemCount: pending.isEmpty ? 2 : pending.length + 2,
           itemBuilder: (context, index) {
-            if (index == 0) return _buildHeader(pending.length);
-            final txn = pending[index - 1];
+            if (index == 0) return _buildSourcesCard();
+            if (pending.isEmpty) return _buildEmptyState();
+            if (index == 1) return _buildHeader(pending.length);
+            final txn = pending[index - 2];
             return _PendingCard(
               key: ValueKey(txn.id),
               transaction: txn,
@@ -219,122 +269,212 @@ class _UpiImportScreenState extends State<UpiImportScreen> {
     );
   }
 
-  Widget _buildEmptyState() {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Container(
-              width: 72,
-              height: 72,
-              decoration: BoxDecoration(
-                color: AppColors.surface,
-                shape: BoxShape.circle,
-                border: Border.all(color: AppColors.border),
-              ),
-              child: const Icon(Icons.inbox_rounded,
-                  color: AppColors.textSecondary, size: 32),
+  /// Both detection sources, with what each one covers and its current state.
+  ///
+  /// Always shown, not only while everything is off. The two sources catch
+  /// different transactions, so someone with SMS on and notifications off is
+  /// still missing every in-app UPI payment — and has no other way to find out.
+  Widget _buildSourcesCard() {
+    final liveCount = (_smsOn ? 1 : 0) + (_notificationsOn ? 1 : 0);
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 14, 14, 4),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Detection sources',
+                    style: GoogleFonts.inter(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.textPrimary,
+                    ),
+                  ),
+                ),
+                Text(
+                  liveCount == 0 ? 'Both off' : '$liveCount of 2 on',
+                  style: GoogleFonts.inter(
+                    fontSize: 12,
+                    color: liveCount == 0
+                        ? AppColors.textSecondary
+                        : AppColors.green,
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(height: 20),
-            Text(
-              'No transactions to review',
+          ),
+          _buildSourceRow(
+            icon: Icons.sms_rounded,
+            title: 'Bank SMS',
+            detail: 'Every bank texts. Keeps working when the app is closed.',
+            isOn: _smsOn,
+            onEnable: _enableSms,
+          ),
+          Container(height: 1, color: AppColors.border),
+          _buildSourceRow(
+            icon: Icons.notifications_active_rounded,
+            title: 'Payment app alerts',
+            detail: 'Catches GPay and PhonePe payments that send no SMS. '
+                'Only while HLedger is running.',
+            isOn: _notificationsOn,
+            onEnable: _enableNotifications,
+          ),
+          // Said plainly, and said here, because this is the screen where a user
+          // decides how much to trust auto-detection. No detector catches cash,
+          // and none catches every app.
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 2, 14, 14),
+            child: Text(
+              liveCount == 0
+                  ? 'Both are optional — you can always add transactions '
+                      'manually or by chat.'
+                  : 'Auto-detect is a helper, not a guarantee: cash never '
+                      'appears, and some apps stay quiet. Anything missed, just '
+                      'add it yourself in Khaata or by chat.',
               style: GoogleFonts.inter(
-                fontSize: 18,
-                fontWeight: FontWeight.w600,
-                color: AppColors.textPrimary,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'When your bank or UPI app posts a payment notification, '
-              'it will show up here for you to confirm.',
-              textAlign: TextAlign.center,
-              style: GoogleFonts.inter(
-                fontSize: 14,
+                fontSize: 12,
+                height: 1.4,
                 color: AppColors.textSecondary,
-                height: 1.5,
               ),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
 
-  /// Friendly, optional invitation to turn on auto-detect. This is NOT an
-  /// error/blocked state — the app is fully usable without it (add transactions
-  /// manually or via chat). Enabling is a deliberate tap, never an ambush.
-  Widget _buildOptInState() {
-    return Center(
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Container(
-              width: 72,
-              height: 72,
-              decoration: BoxDecoration(
-                color: AppColors.accent.withValues(alpha: 0.12),
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(Icons.auto_awesome_rounded,
-                  color: AppColors.accent, size: 32),
+  Widget _buildSourceRow({
+    required IconData icon,
+    required String title,
+    required String detail,
+    required bool isOn,
+    required VoidCallback onEnable,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 12, 8, 12),
+      child: Row(
+        children: [
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: (isOn ? AppColors.green : AppColors.textSecondary)
+                  .withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(10),
             ),
-            const SizedBox(height: 20),
-            Text(
-              'Auto-detect payments (optional)',
-              textAlign: TextAlign.center,
-              style: GoogleFonts.inter(
-                fontSize: 18,
-                fontWeight: FontWeight.w600,
-                color: AppColors.textPrimary,
-              ),
+            child: Icon(
+              icon,
+              size: 18,
+              color: isOn ? AppColors.green : AppColors.textSecondary,
             ),
-            const SizedBox(height: 8),
-            Text(
-              'Let HLedger read your bank/UPI payment notifications so it can '
-              'suggest transactions here — you still confirm each one. '
-              'Everything stays on your device.',
-              textAlign: TextAlign.center,
-              style: GoogleFonts.inter(
-                fontSize: 14,
-                color: AppColors.textSecondary,
-                height: 1.5,
-              ),
-            ),
-            const SizedBox(height: 24),
-            ElevatedButton(
-              onPressed: _enableAutoDetect,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.accent,
-                padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 14),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: GoogleFonts.inter(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textPrimary,
+                  ),
                 ),
-              ),
+                const SizedBox(height: 2),
+                Text(
+                  detail,
+                  style: GoogleFonts.inter(
+                    fontSize: 12,
+                    height: 1.35,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          if (isOn)
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
               child: Text(
-                'Turn on auto-detect',
+                'On',
                 style: GoogleFonts.inter(
-                  fontSize: 15,
+                  fontSize: 12,
                   fontWeight: FontWeight.w600,
-                  color: Colors.white,
+                  color: AppColors.green,
+                ),
+              ),
+            )
+          else
+            TextButton(
+              onPressed: onEnable,
+              child: Text(
+                'Turn on',
+                style: GoogleFonts.inter(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.accent,
                 ),
               ),
             ),
-            const SizedBox(height: 12),
-            Text(
-              'You can always add transactions manually or by chat.',
-              textAlign: TextAlign.center,
-              style: GoogleFonts.inter(
-                fontSize: 12,
-                color: AppColors.textSecondary,
-              ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEmptyState() {
+    final anyOn = _smsOn || _notificationsOn;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 32, 24, 24),
+      child: Column(
+        children: [
+          Container(
+            width: 72,
+            height: 72,
+            decoration: BoxDecoration(
+              color: AppColors.surface,
+              shape: BoxShape.circle,
+              border: Border.all(color: AppColors.border),
             ),
-          ],
-        ),
+            child: const Icon(Icons.inbox_rounded,
+                color: AppColors.textSecondary, size: 32),
+          ),
+          const SizedBox(height: 20),
+          Text(
+            anyOn ? 'Nothing to review yet' : 'Auto-detect is off',
+            style: GoogleFonts.inter(
+              fontSize: 18,
+              fontWeight: FontWeight.w600,
+              color: AppColors.textPrimary,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            anyOn
+                ? 'The next transaction your bank or payment app announces '
+                    'will show up here for you to confirm.'
+                : 'Turn on a source above and HLedger will suggest '
+                    'transactions here — you still confirm each one, and '
+                    'nothing leaves your device until you do.',
+            textAlign: TextAlign.center,
+            style: GoogleFonts.inter(
+              fontSize: 14,
+              color: AppColors.textSecondary,
+              height: 1.5,
+            ),
+          ),
+        ],
       ),
     );
   }
