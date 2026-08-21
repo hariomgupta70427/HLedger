@@ -111,12 +111,11 @@ Do **not** declare Location. It was removed from the merged manifest.
 `PRIVACY_POLICY.md` is accurate and now publishable (it was previously gitignored,
 which contradicted Play's public-URL requirement).
 
-**YOU:**
-1. Replace `[YOUR_PRIVACY_POLICY_URL]` after hosting. Contact email is already
-   filled in — leave it as-is.
-2. Host it: GitHub Pages from this repo, or any public URL. Must load in a private
-   window with no login.
-3. Enter that URL in Play Console → App content → Privacy policy.
+Hosted and live at <https://hledger-privacy-policy.guptahariom049.workers.dev/>.
+The contact email is already filled in.
+
+**YOU:** enter that URL in Play Console → App content → Privacy policy, and
+confirm it loads in a private window with no login.
 
 ## 5. App access instructions
 

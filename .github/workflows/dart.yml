@@ -1,15 +1,15 @@
-# This workflow uses actions that are not certified by GitHub.
-# They are provided by a third-party and are governed by
-# separate terms of service, privacy policy, and support
-# documentation.
-
-name: Dart
+# Flutter CI — analyze and test on every push and PR.
+#
+# This replaces GitHub's default Dart template, which could never have passed for
+# this project: `dart pub get` cannot resolve `flutter: sdk: flutter`, and the
+# tests import `flutter_test`, which the plain `dart test` runner cannot run.
+name: CI
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
 
 jobs:
   build:
@@ -18,25 +18,77 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Note: This workflow uses the latest stable version of the Dart SDK.
-      # You can specify other versions if desired, see documentation here:
-      # https://github.com/dart-lang/setup-dart/blob/main/README.md
-      # - uses: dart-lang/setup-dart@v1
-      - uses: dart-lang/setup-dart@9a04e6d73cca37bd455e0608d7e5092f881fd603
+      - uses: subosito/flutter-action@v2
+        with:
+          # Pinned to the version this project is developed against, so CI cannot
+          # start failing because a new stable landed upstream.
+          flutter-version: '3.35.4'
+          channel: stable
+          cache: true
 
       - name: Install dependencies
-        run: dart pub get
+        run: flutter pub get
 
-      # Uncomment this step to verify the use of 'dart format' on each commit.
-      # - name: Verify formatting
-      #   run: dart format --output=none --set-exit-if-changed .
+      # app_constants.dart is gitignored because it is the file secrets would be
+      # pasted into. CI needs *a* copy to compile, so use the checked-in template.
+      - name: Provide config from template
+        run: |
+          cp lib/core/constants/app_constants.dart.example \
+             lib/core/constants/app_constants.dart
 
-      # Consider passing '--fatal-infos' for slightly stricter analysis.
-      - name: Analyze project source
-        run: dart analyze
+      - name: Analyze
+        run: flutter analyze
 
-      # Your project will need to have tests in test/ and a dependency on
-      # package:test for this step to succeed. Note that Flutter projects will
-      # want to change this to 'flutter test'.
-      - name: Run tests
-        run: dart test
+      - name: Test
+        run: flutter test
+
+  # A real Android build needs android/app/google-services.json, which is
+  # correctly gitignored — it is per-project Firebase config, not source. This job
+  # therefore runs only once GOOGLE_SERVICES_JSON is added as a repository secret.
+  # It is skipped rather than faked, so a green CI never implies an Android build
+  # that did not happen.
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for Firebase config secret
+        id: config
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: |
+          if [ -n "$GOOGLE_SERVICES_JSON" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Skipping Android build — add the GOOGLE_SERVICES_JSON repository secret to enable it."
+          fi
+
+      - uses: subosito/flutter-action@v2
+        if: steps.config.outputs.available == 'true'
+        with:
+          flutter-version: '3.35.4'
+          channel: stable
+          cache: true
+
+      - uses: actions/setup-java@v4
+        if: steps.config.outputs.available == 'true'
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Write Firebase config
+        if: steps.config.outputs.available == 'true'
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: printf '%s' "$GOOGLE_SERVICES_JSON" > android/app/google-services.json
+
+      - name: Build debug APK
+        if: steps.config.outputs.available == 'true'
+        run: |
+          cp lib/core/constants/app_constants.dart.example \
+             lib/core/constants/app_constants.dart
+          flutter pub get
+          # Debug, not release: release signing needs the upload keystore, which
+          # must never be in CI for a public repository.
+          flutter build apk --debug --dart-define=AI_PROXY_URL=

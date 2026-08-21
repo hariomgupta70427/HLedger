@@ -90,7 +90,9 @@ flutter pub get
 flutter run --dart-define-from-file=dart_defines.json
 ```
 
-`dart_defines.json` carries only `GROQ_KEY` (see [ENV_SETUP.md](ENV_SETUP.md)).
+`dart_defines.json` carries only `AI_PROXY_URL` — the public address of the
+Cloudflare AI Worker, not a secret. No provider API key ships in the app; see
+[ENV_SETUP.md](ENV_SETUP.md).
 Firebase needs no dart-define — its config travels in `google-services.json`.
 
 ---

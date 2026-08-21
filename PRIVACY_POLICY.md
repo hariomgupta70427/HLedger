@@ -130,4 +130,4 @@ Questions about privacy? Reach out at **guptahariom049@gmail.com**.
 
 *By using HLedger you agree to this Privacy Policy.*
 
-
+*Hosted at: <https://hledger-privacy-policy.guptahariom049.workers.dev/>*
